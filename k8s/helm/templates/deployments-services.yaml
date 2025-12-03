@@ -1,0 +1,7 @@
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "user-service" "serviceValues" .Values.userService) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "challenge-service" "serviceValues" .Values.challengeService) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "leaderboard-service" "serviceValues" .Values.leaderboardService) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "marketplace-service" "serviceValues" .Values.marketplaceService) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "hiring-service" "serviceValues" .Values.hiringService) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "grader-orchestration" "serviceValues" .Values.graderOrchestration) }}
+{{- include "fathuss.serviceDeployment" (dict "serviceName" "storage-service" "serviceValues" .Values.storageService) }}

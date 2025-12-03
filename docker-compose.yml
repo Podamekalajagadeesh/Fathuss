@@ -1,0 +1,214 @@
+version: '3.8'
+
+services:
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - JWT_SECRET=your-secret-key
+      - FRONTEND_URL=http://localhost:3000
+    depends_on:
+      - user-service
+      - challenge-service
+      - leaderboard-service
+      - marketplace-service
+      - hiring-service
+      - grader-orchestration
+      - storage-service
+
+  # Storage Service
+  storage-service:
+    build:
+      context: ./services/storage-service
+      dockerfile: Dockerfile
+    ports:
+      - "4007:4007"
+    environment:
+      - PORT=4007
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+      - REDIS_URL=redis://redis:6379
+      - CLICKHOUSE_HOST=http://clickhouse:8123
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=password
+      - CLICKHOUSE_DB=fathuss_analytics
+      - IPFS_HOST=ipfs
+      - IPFS_PORT=5001
+    depends_on:
+      - postgres
+      - redis
+      - clickhouse
+      - ipfs
+
+  # User Service
+  user-service:
+    build:
+      context: ./services/user-service
+      dockerfile: Dockerfile
+    ports:
+      - "4001:4001"
+    environment:
+      - PORT=4001
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+
+  # Challenge Service
+  challenge-service:
+    build:
+      context: ./services/challenge-service
+      dockerfile: Dockerfile
+    ports:
+      - "4002:4002"
+    environment:
+      - PORT=4002
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+    depends_on:
+      - postgres
+
+  # Leaderboard Service
+  leaderboard-service:
+    build:
+      context: ./services/leaderboard-service
+      dockerfile: Dockerfile
+    ports:
+      - "4003:4003"
+    environment:
+      - PORT=4003
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+
+  # Marketplace Service
+  marketplace-service:
+    build:
+      context: ./services/marketplace-service
+      dockerfile: Dockerfile
+    ports:
+      - "4004:4004"
+    environment:
+      - PORT=4004
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+    depends_on:
+      - postgres
+
+  # Hiring Service
+  hiring-service:
+    build:
+      context: ./services/hiring-service
+      dockerfile: Dockerfile
+    ports:
+      - "4005:4005"
+    environment:
+      - PORT=4005
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+    depends_on:
+      - postgres
+
+  # Grader Orchestration
+  grader-orchestration:
+    build:
+      context: ./services/grader-orchestration
+      dockerfile: Dockerfile
+    ports:
+      - "4006:4006"
+    environment:
+      - PORT=4006
+      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
+      - REDIS_URL=redis://redis:6379
+      - RABBITMQ_URL=amqp://admin:admin@rabbitmq:5672
+      - MAX_WORKERS=10
+      - WORKER_TIMEOUT=300
+      - WORKER_DOCKER_IMAGE=fathuss/worker:latest
+      - FIRECRACKER_ENABLED=false
+    depends_on:
+      - postgres
+      - redis
+      - rabbitmq
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  # Databases
+  postgres:
+    image: postgres:15
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=fathuss
+      - POSTGRES_USER=user
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U user -d fathuss"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  # RabbitMQ Message Bus
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+
+  # ClickHouse Analytics Database
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8-alpine
+    ports:
+      - "8123:8123"  # HTTP interface
+      - "9000:9000"  # Native interface
+    environment:
+      - CLICKHOUSE_DB=fathuss_analytics
+      - CLICKHOUSE_USER=default
+      - CLICKHOUSE_PASSWORD=password
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./clickhouse-init:/docker-entrypoint-initdb.d
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  # IPFS Node for File Storage
+  ipfs:
+    image: ipfs/kubo:v0.21.0
+    ports:
+      - "4001:4001"  # Swarm
+      - "5001:5001"  # API
+      - "8080:8080"  # Gateway
+    environment:
+      - IPFS_PROFILE=server
+    volumes:
+      - ipfs_data:/data/ipfs
+      - ipfs_staging:/export
+    command: daemon --migrate=true --enable-gc=true
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+  clickhouse_data:
+  ipfs_data:
+  ipfs_staging:

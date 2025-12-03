@@ -1,0 +1,131 @@
+{{- if .Values.ipfs.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fathuss.fullname" . }}-ipfs
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ipfs
+spec:
+  replicas: {{ .Values.ipfs.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "fathuss.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: ipfs
+  template:
+    metadata:
+      labels:
+        {{- include "fathuss.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: ipfs
+    spec:
+      containers:
+        - name: ipfs
+          image: {{ .Values.ipfs.image.repository }}:{{ .Values.ipfs.image.tag }}
+          imagePullPolicy: {{ .Values.ipfs.image.pullPolicy }}
+          ports:
+            - name: swarm
+              containerPort: 4001
+              protocol: TCP
+            - name: api
+              containerPort: 5001
+              protocol: TCP
+            - name: gateway
+              containerPort: 8080
+              protocol: TCP
+          env:
+            {{- range .Values.ipfs.env }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.ipfs.resources | nindent 12 }}
+          volumeMounts:
+            - name: ipfs-data
+              mountPath: /data/ipfs
+            - name: ipfs-staging
+              mountPath: /export
+          command: ["ipfs", "daemon", "--migrate=true", "--enable-gc=true"]
+          livenessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            tcpSocket:
+              port: 5001
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: ipfs-data
+          {{- if .Values.ipfs.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fathuss.fullname" . }}-ipfs-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: ipfs-staging
+          {{- if .Values.ipfs.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "fathuss.fullname" . }}-ipfs-staging
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- if .Values.ipfs.persistence.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fathuss.fullname" . }}-ipfs-data
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.ipfs.persistence.size }}
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "fathuss.fullname" . }}-ipfs-staging
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+  {{- if .Values.global.storageClass }}
+  storageClassName: {{ .Values.global.storageClass }}
+  {{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fathuss.fullname" . }}-ipfs
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ipfs
+spec:
+  type: {{ .Values.ipfs.service.type }}
+  ports:
+    {{- range .Values.ipfs.service.ports }}
+    - name: {{ .name }}
+      port: {{ .port }}
+      targetPort: {{ .targetPort }}
+      protocol: TCP
+    {{- end }}
+  selector:
+    {{- include "fathuss.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: ipfs
+{{- end }}

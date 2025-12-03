@@ -15,6 +15,27 @@ export const apiClient = axios.create({
   },
 })
 
+// Add JWT token to requests if available
+apiClient.interceptors.request.use((config) => {
+  const token = localStorage.getItem('authToken')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// Auth functions
+export const verifySiweSignature = async (message: string, signature: string) => {
+  const response = await apiClient.post('/auth/verify', { message, signature })
+  const { token } = response.data
+  localStorage.setItem('authToken', token)
+  return response.data
+}
+
+export const logout = () => {
+  localStorage.removeItem('authToken')
+}
+
 // Example functions
 export const fetchChallenges = async () => {
   // GraphQL query example

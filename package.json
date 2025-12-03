@@ -6,7 +6,19 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "api:dev": "cd api-gateway && npm run dev",
+    "api:install": "cd api-gateway && npm install",
+    "api:build": "cd api-gateway && npm run build",
+    "api:start": "cd api-gateway && npm start",
+    "services:install": "cd services/user-service && npm install && cd ../challenge-service && npm install && cd ../leaderboard-service && npm install && cd ../marketplace-service && npm install && cd ../hiring-service && npm install && cd ../grader-orchestration && npm install",
+    "services:dev": "concurrently \"npm run user-service:dev\" \"npm run challenge-service:dev\" \"npm run leaderboard-service:dev\" \"npm run marketplace-service:dev\" \"npm run hiring-service:dev\" \"npm run grader-service:dev\"",
+    "user-service:dev": "cd services/user-service && npm run dev",
+    "challenge-service:dev": "cd services/challenge-service && npm run dev",
+    "leaderboard-service:dev": "cd services/leaderboard-service && npm run dev",
+    "marketplace-service:dev": "cd services/marketplace-service && npm run dev",
+    "hiring-service:dev": "cd services/hiring-service && npm run dev",
+    "grader-service:dev": "cd services/grader-orchestration && npm run dev"
   },
   "dependencies": {
     "next": "15.0.0",
@@ -29,6 +41,7 @@
     "siwe": "^2.3.2",
     "@apollo/client": "^3.9.9",
     "graphql": "^16.8.1",
-    "axios": "^1.6.7"
+    "axios": "^1.6.7",
+    "concurrently": "^8.2.2"
   }
 }

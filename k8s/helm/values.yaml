@@ -1,0 +1,525 @@
+# Default values for fathuss helm chart
+# This is a YAML-formatted file.
+# Declare variables to be passed into your templates.
+
+# Global settings
+global:
+  imageRegistry: ""
+  imagePullSecrets: []
+  storageClass: ""
+
+# API Gateway
+apiGateway:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/api-gateway
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    - name: PORT
+      value: "4000"
+    - name: JWT_SECRET
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: jwt-secret
+    - name: FRONTEND_URL
+      value: "https://app.fathuss.com"
+
+# User Service
+userService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/user-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4001
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  env:
+    - name: PORT
+      value: "4001"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+    - name: REDIS_URL
+      value: "redis://fathuss-redis-master:6379"
+
+# Challenge Service
+challengeService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/challenge-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4002
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  env:
+    - name: PORT
+      value: "4002"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+
+# Leaderboard Service
+leaderboardService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/leaderboard-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4003
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  env:
+    - name: PORT
+      value: "4003"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+    - name: REDIS_URL
+      value: "redis://fathuss-redis-master:6379"
+
+# Marketplace Service
+marketplaceService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/marketplace-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4004
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  env:
+    - name: PORT
+      value: "4004"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+
+# Hiring Service
+hiringService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/hiring-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4005
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  env:
+    - name: PORT
+      value: "4005"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+
+# Grader Orchestration
+graderOrchestration:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: fathuss/grader-orchestration
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4006
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    - name: PORT
+      value: "4006"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+    - name: REDIS_URL
+      value: "redis://fathuss-redis-master:6379"
+    - name: RABBITMQ_URL
+      value: "amqp://user:password@fathuss-rabbitmq:5672"
+    - name: MAX_WORKERS
+      value: "10"
+    - name: WORKER_TIMEOUT
+      value: "300"
+    - name: WORKER_DOCKER_IMAGE
+      value: "fathuss/worker:latest"
+    - name: FIRECRACKER_ENABLED
+      value: "false"
+
+# Storage Service
+storageService:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/storage-service
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 4007
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    - name: PORT
+      value: "4007"
+    - name: DATABASE_URL
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: database-url
+    - name: REDIS_URL
+      value: "redis://fathuss-redis-master:6379"
+    - name: CLICKHOUSE_HOST
+      value: "http://fathuss-clickhouse:8123"
+    - name: CLICKHOUSE_USER
+      value: "default"
+    - name: CLICKHOUSE_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: clickhouse-password
+    - name: CLICKHOUSE_DB
+      value: "fathuss_analytics"
+    - name: IPFS_HOST
+      value: "fathuss-ipfs"
+    - name: IPFS_PORT
+      value: "5001"
+
+# ClickHouse Analytics Database
+clickhouse:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: clickhouse/clickhouse-server
+    tag: "23.8-alpine"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    ports:
+      - name: http
+        port: 8123
+        targetPort: 8123
+      - name: native
+        port: 9000
+        targetPort: 9000
+  resources:
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+  persistence:
+    enabled: true
+    size: 50Gi
+  env:
+    - name: CLICKHOUSE_DB
+      value: "fathuss_analytics"
+    - name: CLICKHOUSE_USER
+      value: "default"
+    - name: CLICKHOUSE_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: clickhouse-password
+
+# IPFS Node
+ipfs:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ipfs/kubo
+    tag: "v0.21.0"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    ports:
+      - name: swarm
+        port: 4001
+        targetPort: 4001
+      - name: api
+        port: 5001
+        targetPort: 5001
+      - name: gateway
+        port: 8080
+        targetPort: 8080
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    size: 100Gi
+  env:
+    - name: IPFS_PROFILE
+      value: "server"
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+  hosts:
+    - host: api.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: fathuss-api-gateway
+              port:
+                number: 4000
+    - host: app.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: fathuss-frontend
+              port:
+                number: 3000
+    - host: grafana.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: fathuss-kube-prometheus-stack-grafana
+              port:
+                number: 80
+    - host: sentry.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+          backend:
+            service:
+              name: fathuss-sentry
+              port:
+                number: 9000
+  tls:
+    - secretName: fathuss-tls
+      hosts:
+        - api.fathuss.com
+        - app.fathuss.com
+    - secretName: grafana-tls
+      hosts:
+        - grafana.fathuss.com
+    - secretName: sentry-tls
+      hosts:
+        - sentry.fathuss.com
+
+# Frontend (Next.js)
+frontend:
+  enabled: true
+  replicaCount: 2
+  image:
+    repository: fathuss/frontend
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  env:
+    - name: NEXT_PUBLIC_API_URL
+      value: "https://api.fathuss.com"
+    - name: NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+      valueFrom:
+        secretKeyRef:
+          name: fathuss-secrets
+          key: walletconnect-project-id
+
+# External dependencies (using bitnami charts)
+postgresql:
+  enabled: true
+  auth:
+    postgresPassword: "changeMe123"
+    username: "fathuss"
+    password: "fathuss123"
+    database: "fathuss"
+  architecture: standalone
+  persistence:
+    enabled: true
+    size: 50Gi
+
+redis:
+  enabled: true
+  auth:
+    password: "redis123"
+  architecture: standalone
+  persistence:
+    enabled: true
+    size: 10Gi
+
+rabbitmq:
+  enabled: true
+  auth:
+    username: "user"
+    password: "password"
+  persistence:
+    enabled: true
+    size: 20Gi
+
+# Observability Stack
+kube-prometheus-stack:
+  enabled: true
+  prometheus:
+    prometheusSpec:
+      serviceMonitorSelectorNilUsesHelmValues: false
+      ruleSelectorNilUsesHelmValues: false
+      serviceMonitorSelector: {}
+      ruleSelector: {}
+  grafana:
+    enabled: true
+    adminPassword: "admin"
+    service:
+      type: ClusterIP
+      port: 80
+    ingress:
+      enabled: true
+      className: nginx
+      hosts:
+        - grafana.fathuss.com
+      tls:
+        - secretName: grafana-tls
+          hosts:
+            - grafana.fathuss.com
+    additionalDataSources:
+      - name: Loki
+        type: loki
+        url: http://fathuss-loki:3100
+        access: proxy
+        isDefault: false
+  alertmanager:
+    enabled: true
+
+loki-stack:
+  enabled: true
+  loki:
+    enabled: true
+    service:
+      type: ClusterIP
+      port: 3100
+  promtail:
+    enabled: true
+  grafana:
+    enabled: false  # Disable since we have Grafana from kube-prometheus-stack
+
+sentry:
+  enabled: true
+  postgresql:
+    enabled: false  # Use existing PostgreSQL
+  redis:
+    enabled: false  # Use existing Redis
+  externalPostgresql:
+    host: fathuss-postgresql
+    port: 5432
+    username: fathuss
+    password: fathuss123
+    database: sentry
+  externalRedis:
+    host: fathuss-redis-master
+    port: 6379
+    password: redis123
+  user:
+    create: true
+    email: admin@fathuss.com
+    password: admin123
+  service:
+    type: ClusterIP
+    port: 9000
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - sentry.fathuss.com
+    tls:
+      - secretName: sentry-tls
+        hosts:
+          - sentry.fathuss.com

@@ -354,6 +354,14 @@ kubectl port-forward svc/fathuss-api-gateway 4000:4000 -n fathuss
 - [Getting Started Guide](./docs/getting-started.md)
 - [Challenge Creation](./docs/challenge-creation.md)
 - [API Reference](./docs/api.md)
+- [CI/CD Strategy](./docs/CICD_STRATEGY.md)
+
+## ⚖️ Legal & Compliance
+
+- [Terms of Service](./docs/TERMS_OF_SERVICE.md)
+- [Data Retention Policy](./docs/DATA_RETENTION_POLICY.md)
+- [GDPR Compliance](./docs/GDPR_COMPLIANCE.md)
+- [DMCA Takedown Process](./docs/DMCA_TAKEDOWN.md)
 
 ## 🤝 Contributing
 

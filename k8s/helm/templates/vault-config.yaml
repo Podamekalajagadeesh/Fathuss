@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "fathuss.fullname" . }}-vault-config
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+data:
+  agent-config.hcl: |
+    vault {
+      address = "{{ .Values.vault.address }}"
+      tls_skip_verify = {{ .Values.vault.skipTLSVerify }}
+      retry {
+        num_retries = 3
+      }
+    }
+
+    auto_auth {
+      method "kubernetes" {
+        mount_path = "{{ .Values.vault.kubernetesAuth.mountPath }}"
+        config = {
+          role = "{{ .Values.vault.roleName }}"
+          service_account_token_file = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      }
+
+      sink "file" {
+        config = {
+          path = "/vault/secrets/token"
+        }
+      }
+    }
+
+    template {
+      source = "/vault/config/secrets-template.ctmpl"
+      destination = "/vault/secrets/secrets.env"
+    }

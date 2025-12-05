@@ -144,6 +144,130 @@ const limiter = rateLimit({
 });
 app.use(limiter);
 
+// Advanced rate limiting with IP heuristics
+interface RateLimitEntry {
+  count: number;
+  firstRequest: number;
+  lastRequest: number;
+  blockedUntil?: number;
+  suspiciousPatterns: {
+    rapidRequests: boolean;
+    unusualHours: boolean;
+    multipleUsers: boolean;
+    failedAuthAttempts: number;
+  };
+}
+
+const rateLimitStore = new Map<string, RateLimitEntry>();
+
+const advancedRateLimiter = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+  const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+  const userAgent = req.get('User-Agent') || '';
+  const userId = (req as any).user?.address || 'anonymous';
+
+  // Get or create rate limit entry
+  let entry = rateLimitStore.get(clientIP);
+  const now = Date.now();
+
+  if (!entry) {
+    entry = {
+      count: 0,
+      firstRequest: now,
+      lastRequest: now,
+      suspiciousPatterns: {
+        rapidRequests: false,
+        unusualHours: false,
+        multipleUsers: false,
+        failedAuthAttempts: 0,
+      }
+    };
+    rateLimitStore.set(clientIP, entry);
+  }
+
+  // Update entry
+  entry.count++;
+  entry.lastRequest = now;
+
+  // Check for suspicious patterns
+  const timeSinceFirstRequest = now - entry.firstRequest;
+  const requestsPerMinute = (entry.count / timeSinceFirstRequest) * 60000;
+
+  // Rapid requests pattern
+  if (requestsPerMinute > 30) { // More than 30 requests per minute
+    entry.suspiciousPatterns.rapidRequests = true;
+  }
+
+  // Unusual hours (assuming business hours are 6 AM - 10 PM UTC)
+  const hour = new Date(now).getUTCHours();
+  if (hour < 6 || hour > 22) {
+    entry.suspiciousPatterns.unusualHours = true;
+  }
+
+  // Multiple users from same IP (potential account sharing)
+  if (userId !== 'anonymous') {
+    const usersFromIP = Array.from(rateLimitStore.entries())
+      .filter(([ip, data]) => ip === clientIP && data !== entry)
+      .length;
+    if (usersFromIP > 3) {
+      entry.suspiciousPatterns.multipleUsers = true;
+    }
+  }
+
+  // Check if IP is currently blocked
+  if (entry.blockedUntil && now < entry.blockedUntil) {
+    return res.status(429).json({
+      error: 'Too many requests - IP temporarily blocked',
+      retryAfter: Math.ceil((entry.blockedUntil - now) / 1000)
+    });
+  }
+
+  // Calculate risk score
+  let riskScore = 0;
+  if (entry.suspiciousPatterns.rapidRequests) riskScore += 30;
+  if (entry.suspiciousPatterns.unusualHours) riskScore += 10;
+  if (entry.suspiciousPatterns.multipleUsers) riskScore += 20;
+  if (entry.suspiciousPatterns.failedAuthAttempts > 3) riskScore += 25;
+
+  // Dynamic rate limiting based on risk score
+  const baseLimit = 100;
+  const adjustedLimit = Math.max(10, baseLimit - riskScore);
+
+  if (entry.count > adjustedLimit) {
+    // Block IP for increasing durations based on risk
+    const blockDuration = riskScore > 50 ? 3600000 : 900000; // 1 hour or 15 minutes
+    entry.blockedUntil = now + blockDuration;
+
+    // Log suspicious activity
+    console.warn(`Suspicious activity detected from IP ${clientIP}:`, {
+      riskScore,
+      patterns: entry.suspiciousPatterns,
+      requestsPerMinute,
+      userAgent: userAgent.substring(0, 100)
+    });
+
+    return res.status(429).json({
+      error: 'Suspicious activity detected - IP blocked',
+      retryAfter: Math.ceil(blockDuration / 1000)
+    });
+  }
+
+  // Clean up old entries periodically
+  if (Math.random() < 0.01) { // 1% chance per request
+    const cutoff = now - (24 * 60 * 60 * 1000); // 24 hours ago
+    for (const [ip, data] of rateLimitStore.entries()) {
+      if (data.lastRequest < cutoff) {
+        rateLimitStore.delete(ip);
+      }
+    }
+  }
+
+  next();
+};
+
+// Apply advanced rate limiting to sensitive endpoints
+app.use('/api/graphql', advancedRateLimiter);
+app.use('/auth', advancedRateLimiter);
+
 // Auth middleware
 const authenticateToken = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const authHeader = req.headers['authorization'];

@@ -106,6 +106,7 @@ impl Fuzzer {
                 network_disabled: true,
                 max_file_size: 1024 * 1024, // 1MB
                 max_processes: 5,
+                disk_quota: 10 * 1024 * 1024, // 10MB for fuzzing
             };
 
             let result = execute_in_sandbox(
@@ -215,7 +216,10 @@ impl Fuzzer {
         match rng.gen_range(0..5) {
             0 => json!(rng.gen::<i64>()),
             1 => json!(rng.gen::<f64>()),
-            2 => json!(self.generate_random_string(rng, rng.gen_range(0..50))),
+            2 => {
+                let len = rng.gen_range(0..50);
+                json!(self.generate_random_string(rng, len))
+            },
             3 => {
                 let len = rng.gen_range(0..10);
                 let arr: Vec<Value> = (0..len)
@@ -227,7 +231,8 @@ impl Fuzzer {
                 let mut obj = serde_json::Map::new();
                 let num_fields = rng.gen_range(0..5);
                 for _ in 0..num_fields {
-                    let key = self.generate_random_string(rng, rng.gen_range(1..10));
+                    let key_len = rng.gen_range(1..10);
+                    let key = self.generate_random_string(rng, key_len);
                     let value = self.generate_random_value(rng);
                     obj.insert(key, value);
                 }

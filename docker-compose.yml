@@ -10,8 +10,15 @@ services:
       - "4000:4000"
     environment:
       - PORT=4000
-      - JWT_SECRET=your-secret-key
+      - JWT_SECRET=${JWT_SECRET:-your-secret-key}
+      - JWT_REFRESH_SECRET=${JWT_REFRESH_SECRET}
       - FRONTEND_URL=http://localhost:3000
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - SENTRY_DSN=${SENTRY_DSN}
+      - WALLETCONNECT_PROJECT_ID=${WALLETCONNECT_PROJECT_ID}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ANTI_CHEAT_KEY=${ANTI_CHEAT_KEY}
     depends_on:
       - user-service
       - challenge-service
@@ -30,14 +37,16 @@ services:
       - "4007:4007"
     environment:
       - PORT=4007
-      - DATABASE_URL=postgresql://user:password@postgres:5432/fathuss
-      - REDIS_URL=redis://redis:6379
-      - CLICKHOUSE_HOST=http://clickhouse:8123
-      - CLICKHOUSE_USER=default
-      - CLICKHOUSE_PASSWORD=password
-      - CLICKHOUSE_DB=fathuss_analytics
+      - DATABASE_URL=${DATABASE_URL:-postgresql://user:password@postgres:5432/fathuss}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-http://clickhouse:8123}
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-default}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-password}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-fathuss_analytics}
       - IPFS_HOST=ipfs
       - IPFS_PORT=5001
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - ANTI_CHEAT_KEY=${ANTI_CHEAT_KEY}
     depends_on:
       - postgres
       - redis

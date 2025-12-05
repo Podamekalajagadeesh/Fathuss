@@ -7,6 +7,8 @@ use rlimit::{setrlimit, Resource};
 use nix::unistd::{setuid, setgid, Uid, Gid};
 use nix::sys::resource::{setrlimit as nix_setrlimit, Resource as NixResource};
 use serde_json::{json, Value};
+use cgroups_rs::{cgroup_builder::CgroupBuilder, Cgroup, Subsystem, CgroupPid};
+use std::fs;
 
 pub struct SandboxConfig {
     pub time_limit: Duration,
@@ -15,6 +17,7 @@ pub struct SandboxConfig {
     pub network_disabled: bool,
     pub max_file_size: u64, // in bytes
     pub max_processes: u64,
+    pub disk_quota: u64,   // in bytes for ephemeral volumes
 }
 
 impl Default for SandboxConfig {
@@ -26,6 +29,7 @@ impl Default for SandboxConfig {
             network_disabled: true,
             max_file_size: 10 * 1024 * 1024, // 10MB
             max_processes: 10,
+            disk_quota: 100 * 1024 * 1024, // 100MB
         }
     }
 }
@@ -41,7 +45,7 @@ pub struct ExecutionResult {
     pub trace_events: Vec<TraceEvent>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize)]
 pub struct TraceEvent {
     pub timestamp: u64,
     pub event_type: String,
@@ -72,6 +76,15 @@ pub async fn execute_in_sandbox(
         memory_used: 0,
     });
 
+    // Create a unique cgroup name
+    let cgroup_name = format!("fathuss_sandbox_{}", uuid::Uuid::new_v4().simple());
+
+    // Create cgroup with limits
+    let cgroup = create_cgroup_with_limits(&cgroup_name, config)?;
+
+    // Set up ephemeral volume with disk quota
+    let temp_mount_point = setup_ephemeral_volume(config.disk_quota)?;
+
     // Set resource limits before execution
     set_resource_limits(config)?;
 
@@ -85,6 +98,11 @@ pub async fn execute_in_sandbox(
             .spawn()
             .map_err(|e| format!("Failed to spawn process: {}", e))?;
 
+        // Move process to cgroup
+        if let Some(pid) = child.id() {
+            add_process_to_cgroup(&cgroup, pid)?;
+        }
+
         // If network is disabled, we would set up network namespaces here
         // For now, we'll rely on container-level network isolation
 
@@ -96,7 +114,7 @@ pub async fn execute_in_sandbox(
 
     let execution_time = start_time.elapsed();
 
-    match execution_result {
+    let result = match execution_result {
         Ok(Ok(output)) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -139,7 +157,83 @@ pub async fn execute_in_sandbox(
 
             Err("Execution timed out".to_string())
         }
+    };
+
+    // Clean up cgroup
+    if let Err(e) = cgroup.delete() {
+        eprintln!("Warning: Failed to delete cgroup {}: {}", cgroup_name, e);
     }
+
+    // Clean up temp mount
+    if let Err(e) = std::process::Command::new("umount").arg(&temp_mount_point).status() {
+        eprintln!("Warning: Failed to unmount {}: {:?}", temp_mount_point.display(), e);
+    }
+    if let Err(e) = std::fs::remove_dir(&temp_mount_point) {
+        eprintln!("Warning: Failed to remove temp dir {}: {}", temp_mount_point.display(), e);
+    }
+
+    result
+}
+
+fn create_cgroup_with_limits(name: &str, config: &SandboxConfig) -> Result<Cgroup, String> {
+    let hierarchy = cgroups_rs::hierarchies::auto();
+    let cgroup = CgroupBuilder::new(name)
+        .build(hierarchy)
+        .map_err(|e| format!("Failed to create cgroup: {}", e))?;
+
+    // Set CPU limit (quota in microseconds per period)
+    if let Some(cpu) = cgroup.subsystems().iter().find(|s| matches!(s, Subsystem::Cpu(_))) {
+        if let Subsystem::Cpu(ref cpu_ctrl) = cpu {
+            let period = 100000; // 100ms
+            let quota = (config.cpu_limit as u64 * period) / 100;
+            cpu_ctrl.set_shares(1024).map_err(|e| format!("Failed to set CPU shares: {}", e))?;
+            cpu_ctrl.set_cfs_quota(quota as i64).map_err(|e| format!("Failed to set CPU quota: {}", e))?;
+        }
+    }
+
+    // Set memory limit
+    if let Some(memory) = cgroup.subsystems().iter().find(|s| matches!(s, Subsystem::Mem(_))) {
+        if let Subsystem::Mem(ref mem_ctrl) = memory {
+            mem_ctrl.set_limit(config.memory_limit as i64).map_err(|e| format!("Failed to set memory limit: {}", e))?;
+        }
+    }
+
+    // Set I/O limits for disk quota (approximate)
+    // Note: blkio methods may vary by kernel version, commented out for now
+    // if let Some(blkio) = cgroup.subsystems().iter().find(|s| matches!(s, Subsystem::BlkIo(_))) {
+    //     if let Subsystem::BlkIo(ref blkio_ctrl) = blkio {
+    //         // Limit read/write bytes per second (rough approximation of disk quota)
+    //         let bps_limit = config.disk_quota / 10; // Allow 10 seconds worth of I/O
+    //         blkio_ctrl.set_read_bps("/dev/sda", bps_limit).ok(); // Ignore errors if device doesn't exist
+    //         blkio_ctrl.set_write_bps("/dev/sda", bps_limit).ok();
+    //     }
+    // }
+
+    Ok(cgroup)
+}
+
+fn add_process_to_cgroup(cgroup: &Cgroup, pid: u32) -> Result<(), String> {
+    cgroup.add_task(CgroupPid::from(pid as u64)).map_err(|e| format!("Failed to add process to cgroup: {}", e))
+}
+
+fn setup_ephemeral_volume(disk_quota: u64) -> Result<std::path::PathBuf, String> {
+    // Create a temporary directory for the mount point
+    let mount_point = std::env::temp_dir().join(format!("fathuss_temp_{}", uuid::Uuid::new_v4().simple()));
+    std::fs::create_dir(&mount_point).map_err(|e| format!("Failed to create temp dir: {}", e))?;
+
+    // Mount tmpfs with size limit
+    let size_kb = disk_quota / 1024;
+    let mount_cmd = format!("mount -t tmpfs -o size={}k tmpfs {}", size_kb, mount_point.display());
+    std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&mount_cmd)
+        .status()
+        .map_err(|e| format!("Failed to mount tmpfs: {}", e))?
+        .success()
+        .then_some(())
+        .ok_or("Mount command failed")?;
+
+    Ok(mount_point)
 }
 
 fn set_resource_limits(config: &SandboxConfig) -> Result<(), String> {

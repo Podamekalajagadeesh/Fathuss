@@ -22,10 +22,10 @@ pub async fn grade_code(code: &str, language: &str, test_cases: &[Value], gas_li
 
     let result = match language {
         "rust" => grade_rust(code, test_cases, gas_limit, time_limit, &mut execution_trace).await,
-        "solidity" => grade_solidity(code, test_cases, gas_limit, time_limit, &mut execution_trace).await,
-        "javascript" => grade_javascript(code, test_cases, gas_limit, time_limit, &mut execution_trace).await,
-        "python" => grade_python(code, test_cases, gas_limit, time_limit, &mut execution_trace).await,
-        "move" => grade_move(code, test_cases, gas_limit, time_limit, &mut execution_trace).await,
+        "solidity" => grade_solidity(code, test_cases).await,
+        "javascript" => grade_javascript(code, test_cases).await,
+        "python" => grade_python(code, test_cases).await,
+        "move" => grade_move(code, test_cases).await,
         _ => Err(format!("Unsupported language: {}", language)),
     };
 
@@ -88,6 +88,7 @@ serde_json = "1.0"
         network_disabled: true,
         max_file_size: 100 * 1024 * 1024, // 100MB
         max_processes: 10,
+        disk_quota: 500 * 1024 * 1024, // 500MB for compilation
     };
 
     let compile_result = execute_in_sandbox("cargo", &["build", "--release"], &sandbox_config, temp_dir.path()).await?;

@@ -3,6 +3,7 @@ pub mod fixtures;
 pub mod fuzzer;
 pub mod grader;
 pub mod compiler;
+pub mod anti_cheat;
 
 #[cfg(test)]
 mod tests {

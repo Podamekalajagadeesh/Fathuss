@@ -92,6 +92,26 @@ Component diagram (textual)[Browser/Client]
                                           └─ Sentry
 ```
 
+### Security & Resource Enforcement
+
+Fathuss implements comprehensive security measures and resource controls to ensure safe execution of user-submitted code:
+
+#### Sandboxing & Isolation
+- **Containerized Execution**: All code execution happens in isolated Docker containers
+- **Process Isolation**: Each execution runs in its own process with restricted privileges
+- **Network Isolation**: Containers run with disabled networking by default
+
+#### Resource Limits
+- **CPU Control**: Cgroups limit CPU usage with configurable shares and quotas
+- **Memory Limits**: Strict memory limits enforced via cgroups to prevent OOM attacks
+- **Disk Quotas**: Ephemeral volumes use tmpfs with size limits to control disk usage
+- **Process Limits**: Maximum number of processes per execution is restricted
+
+#### Timeouts & Safety
+- **Execution Timeouts**: Configurable timeouts for compilation and test execution phases
+- **File Size Limits**: Maximum file sizes enforced to prevent disk fill attacks
+- **Privilege Dropping**: Processes run with minimal privileges (nobody user when possible)
+
 ### User-Facing Surfaces
 - **User Web App (Frontend)**: Challenge browsing, in-browser IDE, user profiles, leaderboards, and community features
 - **Author/Admin Dashboard**: Create and manage challenges, tests, hints, versions, and moderation tools

@@ -13,6 +13,7 @@ import crypto from 'crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import WebSocket from 'ws';
+import { GraderCache } from './cache';
 
 dotenv.config();
 
@@ -23,12 +24,30 @@ const app = express();
 const PORT = process.env.PORT || 4006;
 
 // RabbitMQ connection
-let rabbitmqConnection: amqp.Connection;
-let rabbitmqChannel: amqp.Channel;
+let rabbitmqConnection: any;
+let rabbitmqChannel: any;
+
+// Connect to RabbitMQ
+async function connectRabbitMQ() {
+  try {
+    rabbitmqConnection = await amqp.connect(process.env.RABBITMQ_URL || 'amqp://localhost:5672');
+    rabbitmqChannel = await rabbitmqConnection.createChannel();
+    console.log('Connected to RabbitMQ');
+  } catch (error) {
+    console.error('Failed to connect to RabbitMQ:', error);
+  }
+}
 
 // Redis client for caching results
 const redisClient = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
 redisClient.connect().catch(console.error);
+
+// Initialize cache for compiled artifacts
+const cache = new GraderCache({
+  region: process.env.CACHE_REGION,
+  bucket: process.env.CACHE_BUCKET,
+  localCacheDir: process.env.CACHE_LOCAL_DIR || '/tmp/grader-cache'
+});
 
 // Configuration for new features
 const TRACE_STORAGE_PATH = process.env.TRACE_STORAGE_PATH || './traces';
@@ -208,6 +227,9 @@ async function updateLeaderboardAndXP(jobId: string, userId: string, challengeId
     // Don't fail the job if leaderboard update fails
   }
 }
+
+// Store execution trace for audit purposes
+async function storeExecutionTrace(jobId: string, trace: any): Promise<string> {
   const traceId = `trace_${jobId}_${Date.now()}`;
   const tracePath = path.join(TRACE_STORAGE_PATH, `${traceId}.json`);
 
@@ -458,7 +480,7 @@ app.get('/submit/:jobId/trace', authenticateToken, async (req: Request, res: Res
 app.get('/queue/status', async (req: Request, res: Response) => {
   try {
     // Get queue statistics
-    const queueInfo = await rabbitmqChannel.assertQueue('grading_jobs', { passive: true });
+    const queueInfo = await rabbitmqChannel.checkQueue('grading_jobs');
     const activeJobs = await prisma.gradingJob.count({
       where: { status: { in: ['QUEUED', 'PROCESSING'] } }
     });
@@ -506,6 +528,31 @@ app.get('/workers/status', authenticateToken, async (req: Request, res: Response
   }
 });
 
+// Cache management endpoints
+app.get('/cache/stats', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const stats = await cache.getStats();
+    res.json({
+      ...stats,
+      hitRate: 0, // Could be tracked separately
+      lastCleanup: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('Error fetching cache stats:', error);
+    res.status(500).json({ error: 'Failed to fetch cache stats' });
+  }
+});
+
+app.post('/cache/cleanup', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    await cache.cleanup();
+    res.json({ message: 'Cache cleanup completed' });
+  } catch (error) {
+    console.error('Error during cache cleanup:', error);
+    res.status(500).json({ error: 'Cache cleanup failed' });
+  }
+});
+
 // Process grading job (internal function)
 async function processGradingJob(jobId: string, payload: any, workerType: WorkerType) {
   let assignedWorkerId: string | undefined;
@@ -539,12 +586,38 @@ async function processGradingJob(jobId: string, payload: any, workerType: Worker
 
     console.log(`Assigned worker ${worker.id} (${worker.endpoint}) for job ${jobId}`);
 
+    // Check cache for compilation results if this is a compilation job
+    let cachedResult: any = null;
+    let cacheKey: string | undefined;
+
+    if (payload.metadata?.enableCaching !== false && payload.code) {
+      try {
+        const compilerVersion = payload.metadata?.compilerVersion || 'latest';
+        const optimizationLevel = payload.metadata?.optimizationLevel || 0;
+        cacheKey = cache.generateCacheKey(payload.code, compilerVersion, optimizationLevel);
+
+        console.log(`Checking cache for job ${jobId} with key: ${cacheKey}`);
+        cachedResult = await cache.retrieve(cacheKey);
+
+        if (cachedResult) {
+          console.log(`Cache hit for job ${jobId}, using cached compilation result`);
+        } else {
+          console.log(`Cache miss for job ${jobId}, proceeding with compilation`);
+        }
+      } catch (cacheError) {
+        console.warn(`Cache check failed for job ${jobId}:`, cacheError);
+        // Continue without caching if cache fails
+      }
+    }
+
     // Prepare payload with gas/time limits
     const enhancedPayload = {
       ...payload,
       gasLimit: payload.metadata?.gasLimit || DEFAULT_GAS_LIMIT,
       timeLimit: payload.metadata?.timeLimit || DEFAULT_TIME_LIMIT,
-      enableTracing: payload.metadata?.enableTracing ?? true
+      enableTracing: payload.metadata?.enableTracing ?? true,
+      // Use cached result if available
+      cachedResult
     };
 
     // Send to worker with timeout based on time limit
@@ -555,6 +628,22 @@ async function processGradingJob(jobId: string, payload: any, workerType: Worker
 
     const rawResult = response.data;
     const processingTime = Date.now() - startTime;
+
+    // Cache the compilation result if successful and not already cached
+    if (cacheKey && !cachedResult && rawResult.compiledArtifact && !rawResult.error) {
+      try {
+        await cache.store(cacheKey, rawResult.compiledArtifact, {
+          compiler: payload.metadata?.compilerVersion || 'latest',
+          version: payload.metadata?.compilerVersion || 'latest',
+          language: payload.language,
+          optimizationLevel: payload.metadata?.optimizationLevel || 0
+        });
+        console.log(`Cached compilation result for job ${jobId}`);
+      } catch (cacheError) {
+        console.warn(`Failed to cache result for job ${jobId}:`, cacheError);
+        // Don't fail the job if caching fails
+      }
+    }
 
     // Enforce gas limit
     if (rawResult.gasUsed > enhancedPayload.gasLimit) {

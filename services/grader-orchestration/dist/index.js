@@ -36,6 +36,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.broadcastJobUpdate = void 0;
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const helmet_1 = __importDefault(require("helmet"));
@@ -46,18 +47,40 @@ const amqp = __importStar(require("amqplib"));
 const redis_1 = require("redis");
 const worker_pool_1 = require("./worker-pool");
 const types_1 = require("./types");
+const client_1 = require("@prisma/client");
 const crypto_1 = __importDefault(require("crypto"));
 const promises_1 = __importDefault(require("fs/promises"));
 const path_1 = __importDefault(require("path"));
+const ws_1 = __importDefault(require("ws"));
+const cache_1 = require("./cache");
 dotenv_1.default.config();
+// Initialize Prisma client
+const prisma = new client_1.PrismaClient();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 4006;
 // RabbitMQ connection
 let rabbitmqConnection;
 let rabbitmqChannel;
+// Connect to RabbitMQ
+async function connectRabbitMQ() {
+    try {
+        rabbitmqConnection = await amqp.connect(process.env.RABBITMQ_URL || 'amqp://localhost:5672');
+        rabbitmqChannel = await rabbitmqConnection.createChannel();
+        console.log('Connected to RabbitMQ');
+    }
+    catch (error) {
+        console.error('Failed to connect to RabbitMQ:', error);
+    }
+}
 // Redis client for caching results
 const redisClient = (0, redis_1.createClient)({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
 redisClient.connect().catch(console.error);
+// Initialize cache for compiled artifacts
+const cache = new cache_1.GraderCache({
+    region: process.env.CACHE_REGION,
+    bucket: process.env.CACHE_BUCKET,
+    localCacheDir: process.env.CACHE_LOCAL_DIR || '/tmp/grader-cache'
+});
 // Configuration for new features
 const TRACE_STORAGE_PATH = process.env.TRACE_STORAGE_PATH || './traces';
 const PLAGIARISM_CHECK_ENABLED = process.env.PLAGIARISM_CHECK_ENABLED === 'true';
@@ -117,6 +140,30 @@ async function initializeServices() {
     await workerPool.initialize();
     console.log('All services initialized');
 }
+// Get queue position for a job
+async function getQueuePosition(jobId) {
+    try {
+        const job = await prisma.gradingJob.findUnique({
+            where: { jobId },
+            select: { submittedAt: true, status: true }
+        });
+        if (!job || job.status !== 'QUEUED') {
+            return 0;
+        }
+        // Count jobs submitted before this one that are still queued
+        const position = await prisma.gradingJob.count({
+            where: {
+                status: 'QUEUED',
+                submittedAt: { lt: job.submittedAt }
+            }
+        });
+        return position + 1; // +1 because count starts from 0
+    }
+    catch (error) {
+        console.error('Error calculating queue position:', error);
+        return 0;
+    }
+}
 // Ensure trace storage directory exists
 async function ensureTraceStorage() {
     try {
@@ -151,7 +198,48 @@ async function checkPlagiarism(code, language) {
         confidence: isDuplicate ? 100 : 0
     };
 }
-// Store execution trace for audit
+// Update leaderboard and user XP
+async function updateLeaderboardAndXP(jobId, userId, challengeId, score) {
+    try {
+        // Update user experience points and stats
+        const xpGained = Math.floor(score / 10); // 1 XP per 10 points scored
+        await prisma.user.update({
+            where: { id: userId },
+            data: {
+                experiencePoints: { increment: xpGained },
+                totalScore: { increment: score },
+                challengesCompleted: { increment: 1 }
+            }
+        });
+        // Create leaderboard entry
+        await prisma.leaderboardEntry.create({
+            data: {
+                userId,
+                challengeId,
+                score,
+                rank: 0, // Will be calculated later
+                period: 'all_time'
+            }
+        });
+        // Update ranks for this challenge (simplified - in production, use a more efficient ranking system)
+        const challengeEntries = await prisma.leaderboardEntry.findMany({
+            where: { challengeId, period: 'all_time' },
+            orderBy: { score: 'desc' }
+        });
+        for (let i = 0; i < challengeEntries.length; i++) {
+            await prisma.leaderboardEntry.update({
+                where: { id: challengeEntries[i].id },
+                data: { rank: i + 1 }
+            });
+        }
+        console.log(`Updated leaderboard for user ${userId}, challenge ${challengeId}, score: ${score}, XP gained: ${xpGained}`);
+    }
+    catch (error) {
+        console.error(`Failed to update leaderboard and XP for job ${jobId}:`, error);
+        // Don't fail the job if leaderboard update fails
+    }
+}
+// Store execution trace for audit purposes
 async function storeExecutionTrace(jobId, trace) {
     const traceId = `trace_${jobId}_${Date.now()}`;
     const tracePath = path_1.default.join(TRACE_STORAGE_PATH, `${traceId}.json`);
@@ -209,7 +297,7 @@ const TOOL_WORKER_MAP = {
     'move-cli': types_1.WorkerType.COMPILER_MOVE
 };
 // Submit code for grading
-app.post('/grade', authenticateToken, async (req, res) => {
+app.post('/submit', authenticateToken, async (req, res) => {
     try {
         const { challengeId, code, language, testCases, tool, metadata = {} } = req.body;
         const userId = req.user.id;
@@ -244,6 +332,22 @@ app.post('/grade', authenticateToken, async (req, res) => {
         }
         // Create grading job
         const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        // Create database record
+        const dbJob = await prisma.gradingJob.create({
+            data: {
+                jobId,
+                challengeId,
+                userId,
+                code,
+                language,
+                workerType: workerType.toString(),
+                gasLimit: jobMetadata.gasLimit,
+                timeLimit: jobMetadata.timeLimit,
+                enableTracing: jobMetadata.enableTracing,
+                checkPlagiarism: jobMetadata.checkPlagiarism,
+                status: 'QUEUED'
+            }
+        });
         const job = {
             jobId,
             payload: {
@@ -280,23 +384,58 @@ app.post('/grade', authenticateToken, async (req, res) => {
     }
 });
 // Get grading result
-app.get('/grade/:jobId', authenticateToken, async (req, res) => {
+app.get('/submit/:jobId', authenticateToken, async (req, res) => {
     try {
         const { jobId } = req.params;
-        // Fetch from Redis
-        const jobData = await redisClient.get(`job:${jobId}`);
-        if (!jobData) {
-            return res.status(404).json({ error: 'Job not found' });
+        // Fetch from Redis first
+        let jobData = await redisClient.get(`job:${jobId}`);
+        let job;
+        if (jobData) {
+            job = JSON.parse(jobData);
         }
-        const job = JSON.parse(jobData);
+        else {
+            // Fallback to database
+            const dbJob = await prisma.gradingJob.findUnique({
+                where: { jobId }
+            });
+            if (!dbJob) {
+                return res.status(404).json({ error: 'Job not found' });
+            }
+            job = {
+                jobId: dbJob.jobId,
+                status: dbJob.status.toLowerCase(),
+                submittedAt: dbJob.submittedAt.toISOString(),
+                completedAt: dbJob.completedAt?.toISOString(),
+                result: dbJob.status === 'COMPLETED' ? {
+                    jobId: dbJob.jobId,
+                    status: 'completed',
+                    score: dbJob.score || 0,
+                    passedTests: dbJob.passedTests || 0,
+                    totalTests: dbJob.totalTests || 0,
+                    gasUsed: dbJob.gasUsed || 0,
+                    timeUsed: dbJob.timeUsed || 0,
+                    executionTrace: dbJob.executionTrace,
+                    plagiarismCheck: dbJob.plagiarismResult,
+                    output: dbJob.output || '',
+                    error: dbJob.error,
+                    language: dbJob.language
+                } : undefined
+            };
+        }
         if (job.status === 'completed') {
             res.json(job.result);
         }
         else {
+            // Calculate estimated completion time based on queue position
+            const queuePosition = await getQueuePosition(jobId);
+            const estimatedWaitTime = queuePosition * 30; // 30 seconds per job estimate
             res.json({
                 jobId: job.jobId,
                 status: job.status,
-                submittedAt: job.submittedAt
+                submittedAt: job.submittedAt,
+                queuePosition,
+                estimatedCompletionTime: estimatedWaitTime,
+                workerType: job.workerType || 'unknown'
             });
         }
     }
@@ -306,7 +445,7 @@ app.get('/grade/:jobId', authenticateToken, async (req, res) => {
     }
 });
 // Get execution trace for audit
-app.get('/grade/:jobId/trace', authenticateToken, async (req, res) => {
+app.get('/submit/:jobId/trace', authenticateToken, async (req, res) => {
     try {
         const { jobId } = req.params;
         const trace = await getExecutionTrace(jobId);
@@ -320,13 +459,18 @@ app.get('/grade/:jobId/trace', authenticateToken, async (req, res) => {
 // Get grading queue status
 app.get('/queue/status', async (req, res) => {
     try {
-        // TODO: Get actual queue status
+        // Get queue statistics
+        const queueInfo = await rabbitmqChannel.checkQueue('grading_jobs');
+        const activeJobs = await prisma.gradingJob.count({
+            where: { status: { in: ['QUEUED', 'PROCESSING'] } }
+        });
         const status = {
-            queued: 5,
-            processing: 2,
-            completed: 150,
-            failed: 3,
-            averageWaitTime: 45 // seconds
+            queued: queueInfo.messageCount,
+            processing: activeJobs,
+            completed: await prisma.gradingJob.count({ where: { status: 'COMPLETED' } }),
+            failed: await prisma.gradingJob.count({ where: { status: 'FAILED' } }),
+            averageWaitTime: 45, // seconds - could be calculated from actual data
+            totalJobs: await prisma.gradingJob.count()
         };
         res.json(status);
     }
@@ -360,6 +504,31 @@ app.get('/workers/status', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to fetch worker status' });
     }
 });
+// Cache management endpoints
+app.get('/cache/stats', authenticateToken, async (req, res) => {
+    try {
+        const stats = await cache.getStats();
+        res.json({
+            ...stats,
+            hitRate: 0, // Could be tracked separately
+            lastCleanup: new Date().toISOString()
+        });
+    }
+    catch (error) {
+        console.error('Error fetching cache stats:', error);
+        res.status(500).json({ error: 'Failed to fetch cache stats' });
+    }
+});
+app.post('/cache/cleanup', authenticateToken, async (req, res) => {
+    try {
+        await cache.cleanup();
+        res.json({ message: 'Cache cleanup completed' });
+    }
+    catch (error) {
+        console.error('Error during cache cleanup:', error);
+        res.status(500).json({ error: 'Cache cleanup failed' });
+    }
+});
 // Process grading job (internal function)
 async function processGradingJob(jobId, payload, workerType) {
     let assignedWorkerId;
@@ -373,16 +542,49 @@ async function processGradingJob(jobId, payload, workerType) {
             job.status = 'processing';
             await redisClient.setEx(`job:${jobId}`, 3600, JSON.stringify(job));
         }
+        // Update database status
+        await prisma.gradingJob.update({
+            where: { jobId },
+            data: {
+                status: 'PROCESSING',
+                startedAt: new Date()
+            }
+        });
+        (0, exports.broadcastJobUpdate)(jobId, { status: 'processing', startedAt: new Date() });
         // Get worker from pool
         const worker = await workerPool.getOrCreateWorker(workerType);
         assignedWorkerId = worker.id;
         console.log(`Assigned worker ${worker.id} (${worker.endpoint}) for job ${jobId}`);
+        // Check cache for compilation results if this is a compilation job
+        let cachedResult = null;
+        let cacheKey;
+        if (payload.metadata?.enableCaching !== false && payload.code) {
+            try {
+                const compilerVersion = payload.metadata?.compilerVersion || 'latest';
+                const optimizationLevel = payload.metadata?.optimizationLevel || 0;
+                cacheKey = cache.generateCacheKey(payload.code, compilerVersion, optimizationLevel);
+                console.log(`Checking cache for job ${jobId} with key: ${cacheKey}`);
+                cachedResult = await cache.retrieve(cacheKey);
+                if (cachedResult) {
+                    console.log(`Cache hit for job ${jobId}, using cached compilation result`);
+                }
+                else {
+                    console.log(`Cache miss for job ${jobId}, proceeding with compilation`);
+                }
+            }
+            catch (cacheError) {
+                console.warn(`Cache check failed for job ${jobId}:`, cacheError);
+                // Continue without caching if cache fails
+            }
+        }
         // Prepare payload with gas/time limits
         const enhancedPayload = {
             ...payload,
             gasLimit: payload.metadata?.gasLimit || DEFAULT_GAS_LIMIT,
             timeLimit: payload.metadata?.timeLimit || DEFAULT_TIME_LIMIT,
-            enableTracing: payload.metadata?.enableTracing ?? true
+            enableTracing: payload.metadata?.enableTracing ?? true,
+            // Use cached result if available
+            cachedResult
         };
         // Send to worker with timeout based on time limit
         const timeout = Math.min(enhancedPayload.timeLimit * 1000, workerPoolConfig.workerTimeout * 1000);
@@ -391,6 +593,22 @@ async function processGradingJob(jobId, payload, workerType) {
         });
         const rawResult = response.data;
         const processingTime = Date.now() - startTime;
+        // Cache the compilation result if successful and not already cached
+        if (cacheKey && !cachedResult && rawResult.compiledArtifact && !rawResult.error) {
+            try {
+                await cache.store(cacheKey, rawResult.compiledArtifact, {
+                    compiler: payload.metadata?.compilerVersion || 'latest',
+                    version: payload.metadata?.compilerVersion || 'latest',
+                    language: payload.language,
+                    optimizationLevel: payload.metadata?.optimizationLevel || 0
+                });
+                console.log(`Cached compilation result for job ${jobId}`);
+            }
+            catch (cacheError) {
+                console.warn(`Failed to cache result for job ${jobId}:`, cacheError);
+                // Don't fail the job if caching fails
+            }
+        }
         // Enforce gas limit
         if (rawResult.gasUsed > enhancedPayload.gasLimit) {
             throw new Error(`Gas limit exceeded: ${rawResult.gasUsed} > ${enhancedPayload.gasLimit}`);
@@ -447,8 +665,44 @@ async function processGradingJob(jobId, payload, workerType) {
             traceId
         };
         await redisClient.setEx(`job:${jobId}`, 3600, JSON.stringify(updatedJob));
+        // Update database with results
+        await prisma.gradingJob.update({
+            where: { jobId },
+            data: {
+                status: 'COMPLETED',
+                score: result.score,
+                passedTests: result.passedTests,
+                totalTests: result.totalTests,
+                gasUsed: result.gasUsed,
+                timeUsed: result.timeUsed,
+                output: result.output,
+                error: result.error,
+                executionTrace: result.executionTrace ? JSON.parse(JSON.stringify(result.executionTrace)) : null,
+                plagiarismResult: result.plagiarismCheck ? JSON.parse(JSON.stringify(result.plagiarismCheck)) : null,
+                completedAt: new Date(),
+                assignedWorkerId
+            }
+        });
+        (0, exports.broadcastJobUpdate)(jobId, {
+            status: 'completed',
+            score: result.score,
+            passedTests: result.passedTests,
+            totalTests: result.totalTests,
+            gasUsed: result.gasUsed,
+            timeUsed: result.timeUsed,
+            completedAt: new Date()
+        });
+        // Update leaderboard and user XP
+        await updateLeaderboardAndXP(jobId, payload.userId, payload.challengeId, result.score);
+        // Publish completion event for real-time notifications
+        await redisClient.publish('grading:completed', JSON.stringify({
+            jobId,
+            userId: payload.userId,
+            challengeId: payload.challengeId,
+            score: result.score,
+            status: 'completed'
+        }));
         console.log(`Grading job ${jobId} completed with score: ${result.score}, gas: ${result.gasUsed}, time: ${processingTime}ms`);
-        // TODO: Update leaderboard
         // TODO: Send notification to user
     }
     catch (error) {
@@ -463,6 +717,21 @@ async function processGradingJob(jobId, payload, workerType) {
             job.completedAt = new Date().toISOString();
             await redisClient.setEx(`job:${jobId}`, 3600, JSON.stringify(job));
         }
+        // Update database with failure
+        await prisma.gradingJob.update({
+            where: { jobId },
+            data: {
+                status: 'FAILED',
+                error: error instanceof Error ? error.message : 'Unknown error',
+                completedAt: new Date(),
+                assignedWorkerId
+            }
+        });
+        (0, exports.broadcastJobUpdate)(jobId, {
+            status: 'failed',
+            error: error instanceof Error ? error.message : 'Unknown error',
+            completedAt: new Date()
+        });
         // TODO: Retry logic or dead letter queue
     }
     finally {
@@ -502,8 +771,8 @@ app.post('/grade/batch', authenticateToken, async (req, res) => {
                 metadata: { ...batchMetadata, ...submission.metadata } // Allow per-submission overrides
             }, workerType);
         }));
-        const successful = results.filter(r => r.status === 'fulfilled').length;
-        const failed = results.filter(r => r.status === 'rejected').length;
+        const successful = results.filter((r) => r.status === 'fulfilled').length;
+        const failed = results.filter((r) => r.status === 'rejected').length;
         res.json({
             batchJobId,
             total: submissions.length,
@@ -550,6 +819,7 @@ process.on('SIGINT', async () => {
         if (rabbitmqConnection)
             await rabbitmqConnection.close();
         await redisClient.disconnect();
+        await prisma.$disconnect();
         await workerPool.shutdown();
     }
     catch (error) {
@@ -560,4 +830,33 @@ process.on('SIGINT', async () => {
 app.listen(PORT, () => {
     console.log(`Grader Orchestration Service running on port ${PORT}`);
 });
+// WebSocket server for real-time job updates
+const wss = new ws_1.default.Server({ port: 4007 }); // Use a different port for WS
+wss.on('connection', (ws) => {
+    console.log('WebSocket client connected');
+    ws.on('message', (message) => {
+        try {
+            const data = JSON.parse(message);
+            if (data.type === 'subscribe' && data.jobId) {
+                // Subscribe to job updates
+                ws.send(JSON.stringify({ type: 'subscribed', jobId: data.jobId }));
+            }
+        }
+        catch (error) {
+            ws.send(JSON.stringify({ type: 'error', message: 'Invalid message' }));
+        }
+    });
+    ws.on('close', () => {
+        console.log('WebSocket client disconnected');
+    });
+});
+// Function to broadcast job updates
+const broadcastJobUpdate = (jobId, update) => {
+    wss.clients.forEach(client => {
+        if (client.readyState === ws_1.default.OPEN) {
+            client.send(JSON.stringify({ type: 'job_update', jobId, ...update }));
+        }
+    });
+};
+exports.broadcastJobUpdate = broadcastJobUpdate;
 //# sourceMappingURL=index.js.map

@@ -17,7 +17,45 @@ spec:
       labels:
         {{- include "fathuss.selectorLabels" . | nindent 8 }}
         app.kubernetes.io/component: api-gateway
+      annotations:
+        {{- if .Values.vault.enabled }}
+        vault.hashicorp.com/agent-inject: "true"
+        vault.hashicorp.com/agent-inject-secret-jwt: "kv/fathuss/jwt"
+        vault.hashicorp.com/agent-inject-template-jwt: |
+          {{- `{{ with secret "kv/fathuss/jwt" }}` | nindent 10 }}
+          {{- `JWT_SECRET="{{ .Data.secret }}"` | nindent 10 }}
+          {{- `JWT_REFRESH_SECRET="{{ .Data.refresh_secret }}"` | nindent 10 }}
+          {{- `{{ end }}` | nindent 10 }}
+        vault.hashicorp.com/agent-inject-secret-api-keys: "kv/fathuss/api-keys"
+        vault.hashicorp.com/agent-inject-template-api-keys: |
+          {{- `{{ with secret "kv/fathuss/api-keys" }}` | nindent 10 }}
+          {{- `OPENAI_API_KEY="{{ .Data.openai }}"` | nindent 10 }}
+          {{- `GITHUB_TOKEN="{{ .Data.github }}"` | nindent 10 }}
+          {{- `SENTRY_DSN="{{ .Data.sentry }}"` | nindent 10 }}
+          {{- `WALLETCONNECT_PROJECT_ID="{{ .Data.walletconnect }}"` | nindent 10 }}
+          {{- `{{ end }}` | nindent 10 }}
+        vault.hashicorp.com/role: "fathuss"
+        {{- end }}
     spec:
+      serviceAccountName: {{ include "fathuss.fullname" . }}-vault-auth
+      {{- if .Values.vault.enabled }}
+      # Vault agent sidecar
+      initContainers:
+      - name: vault-agent-init
+        image: vault:1.13.0
+        command: ["vault", "agent", "-config=/vault/config/agent-config.hcl"]
+        volumeMounts:
+        - name: vault-config
+          mountPath: /vault/config
+        - name: vault-secrets
+          mountPath: /vault/secrets
+      volumes:
+      - name: vault-config
+        configMap:
+          name: {{ include "fathuss.fullname" . }}-vault-config
+      - name: vault-secrets
+        emptyDir: {}
+      {{- end }}
       containers:
         - name: api-gateway
           image: {{ .Values.apiGateway.image.repository }}:{{ .Values.apiGateway.image.tag | default .Chart.AppVersion }}

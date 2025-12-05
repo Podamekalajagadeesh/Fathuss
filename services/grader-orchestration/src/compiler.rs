@@ -38,7 +38,7 @@ pub async fn compile_foundry(code: &str) -> Result<serde_json::Value, String> {
         "tool": "foundry",
         "output": stdout,
         "error": stderr,
-        "artifacts": if success { "generated" } else { null }
+        "artifacts": if success { serde_json::Value::String("generated".to_string()) } else { serde_json::Value::Null }
     }))
 }
 
@@ -69,12 +69,14 @@ pub async fn compile_hardhat(code: &str) -> Result<serde_json::Value, String> {
     let stdout = String::from_utf8_lossy(&compile_output.stdout);
     let stderr = String::from_utf8_lossy(&compile_output.stderr);
 
+    let artifacts = if success { serde_json::Value::String("generated".to_string()) } else { serde_json::Value::Null };
+
     Ok(json!({
         "success": success,
-        "tool": "hardhat",
+        "tool": "foundry",
         "output": stdout,
         "error": stderr,
-        "artifacts": if success { "generated" } else { null }
+        "artifacts": artifacts
     }))
 }
 
@@ -107,12 +109,14 @@ edition = "2021"
     let stdout = String::from_utf8_lossy(&compile_output.stdout);
     let stderr = String::from_utf8_lossy(&compile_output.stderr);
 
+    let artifacts = if success { serde_json::Value::String("generated".to_string()) } else { serde_json::Value::Null };
+
     Ok(json!({
         "success": success,
-        "tool": "cargo",
+        "tool": "hardhat",
         "output": stdout,
         "error": stderr,
-        "binary": if success { "generated" } else { null }
+        "artifacts": artifacts
     }))
 }
 
@@ -148,11 +152,13 @@ AptosStdlib = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "
     let stdout = String::from_utf8_lossy(&compile_output.stdout);
     let stderr = String::from_utf8_lossy(&compile_output.stderr);
 
+    let bytecode = if success { serde_json::Value::String("generated".to_string()) } else { serde_json::Value::Null };
+
     Ok(json!({
         "success": success,
         "tool": "move-cli",
         "output": stdout,
         "error": stderr,
-        "bytecode": if success { "generated" } else { null }
+        "bytecode": bytecode
     }))
 }

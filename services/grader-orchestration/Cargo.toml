@@ -27,4 +27,12 @@ chrono = { version = "0.4", features = ["serde"] }
 regex = "1.10"
 libc = "0.2"
 rlimit = "0.10"
-nix = "0.27"
+nix = { version = "0.27", features = ["user", "resource"] }
+cgroups-rs = "0.3"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+swc_ecma_parser = "0.143"
+swc_common = "0.33"
+swc_ecma_ast = "0.111"
+petgraph = "0.6"
+strsim = "0.10"
+md5 = "0.7"

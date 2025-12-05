@@ -65,3 +65,107 @@ spec:
           averageUtilization: {{ .Values.frontend.autoscaling.targetMemoryUtilizationPercentage }}
     {{- end }}
 {{- end }}
+---
+{{- if .Values.graderOrchestration.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "fathuss.fullname" . }}-grader-orchestration
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grader-orchestration
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "fathuss.fullname" . }}-grader-orchestration
+  minReplicas: {{ .Values.graderOrchestration.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.graderOrchestration.autoscaling.maxReplicas }}
+  metrics:
+    {{- if .Values.graderOrchestration.autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.graderOrchestration.autoscaling.targetCPUUtilizationPercentage }}
+    {{- end }}
+    {{- if .Values.graderOrchestration.autoscaling.targetQueueLength }}
+    - type: Pods
+      pods:
+        metric:
+          name: grader_queue_length
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.graderOrchestration.autoscaling.targetQueueLength | quote }}
+    {{- end }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+      - type: Percent
+        value: 50
+        periodSeconds: 60
+      - type: Pods
+        value: 2
+        periodSeconds: 60
+      selectPolicy: Min
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+      - type: Percent
+        value: 100
+        periodSeconds: 60
+      - type: Pods
+        value: 5
+        periodSeconds: 60
+      selectPolicy: Max
+{{- end }}
+---
+{{- if .Values.graderWorker.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "fathuss.fullname" . }}-grader-worker
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grader-worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "fathuss.fullname" . }}-grader-worker
+  minReplicas: {{ .Values.graderWorker.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.graderWorker.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.graderWorker.autoscaling.targetCPUUtilizationPercentage }}
+    - type: External
+      external:
+        metric:
+          name: rabbitmq_queue_messages
+          selector:
+            matchLabels:
+              queue: "grader_jobs"
+        target:
+          type: AverageValue
+          averageValue: "10"
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 600
+      policies:
+      - type: Percent
+        value: 25
+        periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+      - type: Percent
+        value: 200
+        periodSeconds: 60
+      selectPolicy: Max
+{{- end }}

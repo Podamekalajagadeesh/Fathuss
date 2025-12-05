@@ -2,6 +2,7 @@
 Generic service deployment template
 */}}
 {{- define "fathuss.serviceDeployment" -}}
+{{- $ := index . "context" -}}
 {{- $serviceName := index . "serviceName" -}}
 {{- $serviceValues := index . "serviceValues" -}}
 {{- if $serviceValues.enabled }}

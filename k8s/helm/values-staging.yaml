@@ -1,0 +1,74 @@
+# Staging environment values
+environment: "staging"
+
+# Global settings
+global:
+  imageRegistry: "ghcr.io"
+  imagePullSecrets:
+    - name: ghcr-secret
+
+# API Gateway
+apiGateway:
+  replicaCount: 2
+  resources:
+    limits:
+      cpu: 300m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
+# Services
+userService:
+  replicaCount: 2
+challengeService:
+  replicaCount: 2
+graderOrchestration:
+  canary:
+    enabled: true
+    replicas: 3
+storageService:
+  replicaCount: 2
+
+# Monitoring
+kube-prometheus-stack:
+  grafana:
+    adminPassword: "staging-admin"
+  alertmanager:
+    enabled: true
+
+loki-stack:
+  enabled: true
+
+sentry:
+  enabled: true
+
+# Ingress
+ingress:
+  className: nginx
+  tls:
+    enabled: true
+  hosts:
+    - host: staging.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Database settings for staging
+externalDatabase:
+  host: "staging-fathuss-postgresql.cluster-xxxx.us-east-1.rds.amazonaws.com"
+  port: 5432
+  database: "fathuss_staging"
+
+externalRedis:
+  host: "staging-fathuss-redis.xxxxxx.ng.0001.use1.cache.amazonaws.com"
+  port: 6379
+
+# ArgoCD settings
+argocd:
+  namespace: "argocd"
+  server:
+    ingress:
+      enabled: true
+      hosts:
+        - argocd-staging.fathuss.com

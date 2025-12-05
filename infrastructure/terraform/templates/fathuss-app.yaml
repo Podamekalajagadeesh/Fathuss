@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: fathuss-${environment}
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ${repo_url}
+    path: k8s/helm
+    targetRevision: HEAD
+    helm:
+      valueFiles:
+        - values-${environment}.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: fathuss-${environment}
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+  revisionHistoryLimit: 10

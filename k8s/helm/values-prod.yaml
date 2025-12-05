@@ -1,0 +1,148 @@
+# Production environment values
+environment: "prod"
+
+# Global settings
+global:
+  imageRegistry: "ghcr.io"
+  imagePullSecrets:
+    - name: ghcr-secret
+
+# API Gateway
+apiGateway:
+  replicaCount: 5
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 10
+    targetCPUUtilizationPercentage: 70
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 200m
+      memory: 256Mi
+
+# Services
+userService:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+challengeService:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+graderOrchestration:
+  canary:
+    enabled: true
+    replicas: 5
+  autoscaling:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 15
+storageService:
+  replicaCount: 3
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+adminService:
+  replicaCount: 2
+hiringService:
+  replicaCount: 2
+leaderboardService:
+  replicaCount: 2
+marketplaceService:
+  replicaCount: 2
+auditService:
+  replicaCount: 2
+
+# Monitoring (enhanced for production)
+kube-prometheus-stack:
+  prometheus:
+    prometheusSpec:
+      replicas: 2
+      retention: 30d
+  grafana:
+    adminPassword: "prod-admin-secure-password"
+    persistence:
+      enabled: true
+      size: 50Gi
+  alertmanager:
+    enabled: true
+    alertmanagerSpec:
+      replicas: 2
+
+loki-stack:
+  enabled: true
+  loki:
+    persistence:
+      enabled: true
+      size: 100Gi
+
+sentry:
+  enabled: true
+  postgresql:
+    persistence:
+      enabled: true
+      size: 50Gi
+  redis:
+    master:
+      persistence:
+        enabled: true
+        size: 20Gi
+
+# Ingress
+ingress:
+  className: nginx
+  tls:
+    enabled: true
+  hosts:
+    - host: app.fathuss.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Database settings for production
+externalDatabase:
+  host: "prod-fathuss-postgresql.cluster-xxxx.us-east-1.rds.amazonaws.com"
+  port: 5432
+  database: "fathuss_prod"
+
+externalRedis:
+  host: "prod-fathuss-redis.xxxxxx.ng.0001.use1.cache.amazonaws.com"
+  port: 6379
+
+# ArgoCD settings
+argocd:
+  namespace: "argocd"
+  server:
+    ingress:
+      enabled: true
+      hosts:
+        - argocd.fathuss.com
+    replicas: 2
+
+# Security enhancements for production
+securityProfiles:
+  enabled: true
+
+networkPolicy:
+  enabled: true
+
+# Pod Security Standards
+podSecurityStandards:
+  enabled: true
+
+# Resource limits (stricter in production)
+resources:
+  limits:
+    cpu: 1000m
+    memory: 2Gi
+  requests:
+    cpu: 200m
+    memory: 512Mi

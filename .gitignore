@@ -2,3 +2,44 @@
 node_modules
 *.log
 .env.local
+
+# Environment variables and secrets
+.env
+.env.production
+.env.staging
+.env.development
+.env.*.local
+
+# Kubernetes secrets
+k8s/secrets/
+k8s/**/*.key
+k8s/**/*.pem
+k8s/**/*.crt
+
+# Vault configuration
+k8s/vault-init.sh
+k8s/setup-azure-keyvault.sh
+
+# IDE and editor files
+.vscode/settings.json
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Temporary files
+*.tmp
+*.temp

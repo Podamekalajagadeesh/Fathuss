@@ -37,7 +37,7 @@ async fn main() {
 
     // Health check endpoint
     let health = warp::path("health")
-        .map(|| warp::reply::json(&serde_json::json!({"status": "ok", "worker_type": worker_type})));
+        .map(move || warp::reply::json(&serde_json::json!({"status": "ok", "worker_type": worker_type})));
 
     // Grading endpoint
     let grade = warp::path("grade")
@@ -232,11 +232,13 @@ async fn compile_code(language: &str, workspace: &std::path::Path) -> Result<Exe
         network_disabled: true,
         max_file_size: 100 * 1024 * 1024, // 100MB
         max_processes: 10,
+        disk_quota: 500 * 1024 * 1024, // 500MB
     };
 
     let (command, args) = get_compile_command_with_args(language, workspace);
+    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
 
-    execute_in_sandbox(&command, &args, &sandbox_config, workspace).await
+    execute_in_sandbox(&command, &args_refs, &sandbox_config, workspace).await
 }
 
 fn get_compile_command(language: &str) -> String {
@@ -305,7 +307,7 @@ async fn run_test_suite(
 
         // Create test input file
         let input_file = format!("test_input_{}.json", fixture.id);
-        std::fs::write(workspace.join(&input_file), serde_json::to_string_pretty(&fixture.input)?)?;
+        std::fs::write(workspace.join(&input_file), serde_json::to_string_pretty(&fixture.input).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
 
         // Run the test
         let sandbox_config = SandboxConfig {
@@ -315,6 +317,7 @@ async fn run_test_suite(
             network_disabled: true,
             max_file_size: 10 * 1024 * 1024, // 10MB
             max_processes: 5,
+            disk_quota: 50 * 1024 * 1024, // 50MB per test
         };
 
         let run_command = get_run_command(language);
@@ -348,7 +351,8 @@ async fn handle_grade(
     // Extract job details
     let code = payload.get("code").and_then(|v| v.as_str()).unwrap_or("");
     let language = payload.get("language").and_then(|v| v.as_str()).unwrap_or("");
-    let test_cases = payload.get("testCases").and_then(|v| v.as_array()).unwrap_or(&vec![]);
+    let empty_test_cases = vec![];
+    let test_cases = payload.get("testCases").and_then(|v| v.as_array()).unwrap_or(&empty_test_cases);
     let gas_limit = payload.get("gasLimit").and_then(|v| v.as_u64()).unwrap_or(1000000);
     let time_limit = payload.get("timeLimit").and_then(|v| v.as_u64()).unwrap_or(30);
     let enable_tracing = payload.get("enableTracing").and_then(|v| v.as_bool()).unwrap_or(true);

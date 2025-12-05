@@ -1,0 +1,96 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fathuss.fullname" . }}-audit-service
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "fathuss.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: audit-service
+  template:
+    metadata:
+      labels:
+        {{- include "fathuss.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: audit-service
+    spec:
+      serviceAccountName: {{ include "fathuss.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: audit-service
+        image: "{{ .Values.auditService.image.repository }}:{{ .Values.auditService.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.auditService.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fathuss.fullname" . }}-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fathuss.fullname" . }}-secrets
+              key: redis-url
+        - name: LOKI_URL
+          value: "http://{{ include "fathuss.fullname" . }}-loki:3100"
+        volumeMounts:
+        - name: audit-config
+          mountPath: /app/config
+        resources:
+          {{- toYaml .Values.auditService.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: audit-config
+        configMap:
+          name: {{ include "fathuss.fullname" . }}-audit-config
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "fathuss.fullname" . }}-audit-service
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-service
+spec:
+  type: ClusterIP
+  ports:
+  - port: 80
+    targetPort: http
+    protocol: TCP
+    name: http
+  selector:
+    {{- include "fathuss.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: audit-service

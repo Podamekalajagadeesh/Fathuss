@@ -1,0 +1,182 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fathuss.fullname" . }}-grader-worker
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grader-worker
+spec:
+  replicas: {{ .Values.graderWorker.autoscaling.minReplicas }}
+  selector:
+    matchLabels:
+      {{- include "fathuss.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: grader-worker
+  template:
+    metadata:
+      labels:
+        {{- include "fathuss.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: grader-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9464"
+    spec:
+      serviceAccountName: {{ include "fathuss.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if .Values.graderWorker.spotInstances.enabled }}
+      tolerations:
+      - key: "spot"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+      {{- end }}
+      containers:
+      - name: grader-worker
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["node", "src/worker.js"]
+        ports:
+        - name: metrics
+          containerPort: 9464
+          protocol: TCP
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: WORKER_TYPE
+          value: "batch"
+        - name: CACHE_BUCKET
+          value: "{{ .Values.cache.bucket }}"
+        - name: CACHE_REGION
+          value: "{{ .Values.cache.region }}"
+        - name: RABBITMQ_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fathuss.fullname" . }}-secrets
+              key: rabbitmq-url
+        - name: DATABASE_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fathuss.fullname" . }}-secrets
+              key: database-url
+        - name: REDIS_URL
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "fathuss.fullname" . }}-secrets
+              key: redis-url
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /app/cache
+        - name: tmp-volume
+          mountPath: /tmp
+        resources:
+          {{- toYaml .Values.graderWorker.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - node
+            - -e
+            - "require('fs').existsSync('/tmp/healthy')"
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          exec:
+            command:
+            - node
+            - -e
+            - "require('fs').existsSync('/tmp/ready')"
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: cache-volume
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp-volume
+        emptyDir: {}
+      {{- if .Values.graderWorker.spotInstances.enabled }}
+      nodeSelector:
+        node-type: spot
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+---
+{{- if .Values.graderWorker.warmPool.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "fathuss.fullname" . }}-grader-worker-warm-pool
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    app.kubernetes.io/component: grader-worker-warm-pool
+spec:
+  replicas: {{ .Values.graderWorker.warmPool.minReplicas }}
+  selector:
+    matchLabels:
+      {{- include "fathuss.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: grader-worker-warm-pool
+  template:
+    metadata:
+      labels:
+        {{- include "fathuss.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: grader-worker-warm-pool
+    spec:
+      serviceAccountName: {{ include "fathuss.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: grader-worker-warm
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        command: ["node", "src/warm-worker.js"]
+        env:
+        - name: NODE_ENV
+          value: "production"
+        - name: WARM_POOL_MODE
+          value: "true"
+        - name: CACHE_BUCKET
+          value: "{{ .Values.cache.bucket }}"
+        - name: CACHE_REGION
+          value: "{{ .Values.cache.region }}"
+        volumeMounts:
+        - name: cache-volume
+          mountPath: /app/cache
+        - name: tmp-volume
+          mountPath: /tmp
+        resources:
+          {{- toYaml .Values.graderWorker.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - node
+            - -e
+            - "console.log('warm pool healthy')"
+          initialDelaySeconds: 30
+          periodSeconds: 60
+      volumes:
+      - name: cache-volume
+        emptyDir:
+          sizeLimit: 2Gi
+      - name: tmp-volume
+        emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

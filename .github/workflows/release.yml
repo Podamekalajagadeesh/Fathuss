@@ -1,0 +1,120 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      service:
+        description: 'Service to deploy (leave empty for all)'
+        required: false
+        type: string
+      canary_percentage:
+        description: 'Canary deployment percentage (for grader service)'
+        required: false
+        default: '20'
+        type: string
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+    - name: Deploy to Kubernetes
+      run: |
+        if [ "${{ github.event.inputs.service }}" == "grader-orchestration" ]; then
+          # Canary deployment for grader
+          echo "Performing canary deployment for grader service"
+          helm upgrade --install fathuss-grader-canary ./k8s/helm \
+            --namespace fathuss-${{ github.event.inputs.environment }} \
+            --set graderOrchestration.canary.enabled=true \
+            --set graderOrchestration.canary.replicas=${{ github.event.inputs.canary_percentage }} \
+            --set image.tag=${{ github.sha }} \
+            --wait
+        elif [ -n "${{ github.event.inputs.service }}" ]; then
+          # Deploy specific service
+          echo "Deploying service: ${{ github.event.inputs.service }}"
+          helm upgrade --install fathuss-${{ github.event.inputs.service }} ./k8s/helm \
+            --namespace fathuss-${{ github.event.inputs.environment }} \
+            --set ${{ github.event.inputs.service }}.enabled=true \
+            --set image.tag=${{ github.sha }} \
+            --wait
+        else
+          # Deploy all services
+          echo "Deploying all services"
+          helm upgrade --install fathuss ./k8s/helm \
+            --namespace fathuss-${{ github.event.inputs.environment }} \
+            --set image.tag=${{ github.sha }} \
+            --wait
+        fi
+
+  canary-promotion:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    if: github.event.inputs.service == 'grader-orchestration' && github.event.inputs.environment == 'production'
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+    - name: Check canary metrics
+      run: |
+        echo "Checking canary deployment metrics..."
+        # Check error rates, latency, etc.
+        kubectl get rollouts -n fathuss-production
+
+    - name: Promote canary
+      run: |
+        echo "Promoting canary deployment..."
+        kubectl argo rollouts promote grader-orchestration -n fathuss-production
+
+    - name: Wait for rollout completion
+      run: |
+        kubectl argo rollouts wait grader-orchestration -n fathuss-production --timeout 600s
+
+  rollback:
+    needs: [release, canary-promotion]
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    if: failure() && github.event.inputs.environment == 'production'
+    steps:
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+    - name: Rollback deployment
+      run: |
+        echo "Rolling back deployment due to failure..."
+        if [ "${{ github.event.inputs.service }}" == "grader-orchestration" ]; then
+          kubectl argo rollouts abort grader-orchestration -n fathuss-production
+        else
+          helm rollback fathuss -n fathuss-${{ github.event.inputs.environment }}
+        fi
+
+    - name: Send alert
+      run: |
+        echo "Sending rollback alert..."
+        # Integration with alerting system (Slack, PagerDuty, etc.)

@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
 
@@ -36,17 +37,22 @@ const authenticateToken = (req: express.Request, res: express.Response, next: ex
     return res.status(401).json({ error: 'Access token required' });
   }
 
-  // In production, verify JWT from API Gateway
-  // For now, just check if token exists
-  (req as any).user = { id: 'user-123', address: '0x...' };
-  next();
+  try {
+    // Verify JWT token (use same secret as API Gateway)
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+    (req as any).user = decoded;
+    next();
+  } catch (error) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
 };
 
 // Author/Admin middleware (for publishing/retiring challenges)
 const requireAuthor = (req: express.Request, res: express.Response, next: express.NextFunction) => {
   const user = (req as any).user;
-  // TODO: Check if user has author/admin role from JWT
-  // For now, allow all authenticated users
+  if (!user || !user.role || !['creator', 'admin'].includes(user.role)) {
+    return res.status(403).json({ error: 'Insufficient permissions. Creator or Admin role required.' });
+  }
   next();
 };
 
@@ -175,7 +181,7 @@ app.get('/challenges/:slug', authenticateToken, async (req, res) => {
 
     // Get published version (or latest if includeUnpublished for authors)
     const versionWhere: any = {
-      challengeId: id,
+      challengeId: challenge.id,
       isRetired: false
     };
 
@@ -208,7 +214,21 @@ app.get('/challenges/:slug', authenticateToken, async (req, res) => {
     }
 
     const response = {
-      ...challenge,
+      id: challenge.id,
+      slug: challenge.slug,
+      title: challenge.title,
+      description: challenge.description,
+      shortDescription: challenge.shortDescription,
+      category: challenge.category,
+      difficulty: challenge.difficulty,
+      points: challenge.points,
+      timeLimit: challenge.timeLimit,
+      memoryLimit: challenge.memoryLimit,
+      tags: challenge.tags,
+      isActive: challenge.isActive,
+      createdBy: challenge.createdBy,
+      createdAt: challenge.createdAt,
+      updatedAt: challenge.updatedAt,
       version: publishedVersion.version,
       publishedAt: publishedVersion.publishedAt,
       starterCode: publishedVersion.starterCode,
@@ -233,7 +253,7 @@ app.get('/challenges/:slug', authenticateToken, async (req, res) => {
         mimeType: f.mimeType,
         description: f.description
       })),
-      submissionCount: challenge._count.submissions
+      submissionCount: (challenge as any)._count.submissions
     };
 
     res.json(response);
@@ -400,8 +420,25 @@ app.post('/challenges', authenticateToken, requireAuthor, async (req, res) => {
 
     const userId = (req as any).user.address;
 
+    // Generate slug from title
+    const baseSlug = title
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, '') // Remove special characters
+      .replace(/\s+/g, '-') // Replace spaces with hyphens
+      .replace(/-+/g, '-') // Replace multiple hyphens with single
+      .trim();
+
+    // Ensure unique slug
+    let slug = baseSlug;
+    let counter = 1;
+    while (await prisma.challenge.findUnique({ where: { slug } })) {
+      slug = `${baseSlug}-${counter}`;
+      counter++;
+    }
+
     const challenge = await prisma.challenge.create({
       data: {
+        slug,
         title,
         description,
         shortDescription,
@@ -705,11 +742,19 @@ app.get('/fixtures/:hash', async (req, res) => {
   try {
     const { hash } = req.params;
 
-    // TODO: Download from IPFS
-    // For now, return placeholder
+    // Download from IPFS gateway
+    const ipfsGatewayUrl = `https://ipfs.io/ipfs/${hash}`;
+    const response = await fetch(ipfsGatewayUrl);
+
+    if (!response.ok) {
+      throw new Error(`IPFS gateway returned ${response.status}`);
+    }
+
+    const content = await response.text();
+
     res.json({
       hash,
-      content: 'Fixture content would be here'
+      content
     });
   } catch (error) {
     console.error('Error downloading fixture:', error);

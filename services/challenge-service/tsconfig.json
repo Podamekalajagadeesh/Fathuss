@@ -13,5 +13,4 @@
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
-}</content>
-<parameter name="filePath">/workspaces/Fathuss/services/challenge-service/tsconfig.json
+}

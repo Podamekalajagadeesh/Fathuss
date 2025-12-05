@@ -5,16 +5,22 @@ use tokio::process::Command as TokioCommand;
 pub async fn compile_foundry(code: &str) -> Result<serde_json::Value, String> {
     let temp_dir = tempfile::tempdir().map_err(|e| e.to_string())?;
 
-    // Initialize Foundry project
-    let init_output = TokioCommand::new("forge")
-        .args(&["init", "--no-commit"])
-        .current_dir(&temp_dir)
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    // Check if we have a foundry.toml (for local challenges)
+    let foundry_toml = temp_dir.path().join("foundry.toml");
+    let is_foundry_project = foundry_toml.exists();
 
-    if !init_output.status.success() {
-        return Err("Failed to initialize Foundry project".to_string());
+    if !is_foundry_project {
+        // Initialize Foundry project
+        let init_output = TokioCommand::new("forge")
+            .args(&["init", "--no-commit"])
+            .current_dir(&temp_dir)
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if !init_output.status.success() {
+            return Err("Failed to initialize Foundry project".to_string());
+        }
     }
 
     // Write contract code

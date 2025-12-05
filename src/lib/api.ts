@@ -36,14 +36,18 @@ export const logout = () => {
   localStorage.removeItem('authToken')
 }
 
-// Example functions
 export const fetchChallenges = async () => {
-  // GraphQL query example
-  // const { data } = await apolloClient.query({ query: GET_CHALLENGES })
-  // return data
-
-  // For now, REST example
   const response = await apiClient.get('/challenges')
+  return response.data
+}
+
+export const fetchChallenge = async (id: string) => {
+  const response = await apiClient.get(`/challenges/${id}`)
+  return response.data
+}
+
+export const fetchLeaderboard = async (): Promise<{ username?: string; address: string; totalPoints: number }[]> => {
+  const response = await apiClient.get('/leaderboard/global')
   return response.data
 }
 

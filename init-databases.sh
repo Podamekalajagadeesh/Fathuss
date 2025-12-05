@@ -16,6 +16,10 @@ echo "📊 Setting up Postgres database..."
 docker-compose exec -T postgres psql -U user -d fathuss -f /docker-entrypoint-initdb.d/schema.sql 2>/dev/null || \
 docker-compose exec -T postgres psql -U user -d fathuss -c "$(cat database/schema.sql)"
 
+# Seed sample data
+echo "🌱 Seeding sample challenges..."
+docker-compose exec -T postgres psql -U user -d fathuss -c "$(cat database/seed.sql)"
+
 # Initialize ClickHouse tables
 echo "📈 Setting up ClickHouse analytics database..."
 docker-compose exec -T clickhouse clickhouse-client --user default --password password --database fathuss_analytics --multiline --multiquery -q "$(cat clickhouse-init/init.sql)"

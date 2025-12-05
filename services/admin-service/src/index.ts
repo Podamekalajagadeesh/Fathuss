@@ -421,7 +421,7 @@ app.post('/challenges/bulk-review', authenticateToken, requireAdmin, async (req,
 
         results.push({ challengeId, success: true, review });
       } catch (error) {
-        results.push({ challengeId, success: false, error: error.message });
+        results.push({ challengeId, success: false, error: (error as Error).message });
       }
     }
 

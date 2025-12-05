@@ -10,15 +10,21 @@ const express_rate_limit_1 = __importDefault(require("express-rate-limit"));
 const dotenv_1 = __importDefault(require("dotenv"));
 const siwe_1 = require("siwe");
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const bcryptjs_1 = __importDefault(require("bcryptjs"));
+const crypto_1 = __importDefault(require("crypto"));
 const passport_1 = __importDefault(require("passport"));
 const passport_github2_1 = require("passport-github2");
 const express_session_1 = __importDefault(require("express-session"));
 const express_graphql_1 = require("express-graphql");
 const graphql_1 = require("graphql");
+const ws_1 = require("ws");
+const ws_2 = __importDefault(require("ws"));
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+// In-memory store for password reset tokens (in production, use Redis or database)
+const passwordResetTokens = new Map();
 // GraphQL Schema
 const schema = (0, graphql_1.buildSchema)(`
   type User {
@@ -138,6 +144,102 @@ const limiter = (0, express_rate_limit_1.default)({
     max: 100 // limit each IP to 100 requests per windowMs
 });
 app.use(limiter);
+const rateLimitStore = new Map();
+const advancedRateLimiter = (req, res, next) => {
+    const clientIP = req.ip || req.connection.remoteAddress || 'unknown';
+    const userAgent = req.get('User-Agent') || '';
+    const userId = req.user?.address || 'anonymous';
+    // Get or create rate limit entry
+    let entry = rateLimitStore.get(clientIP);
+    const now = Date.now();
+    if (!entry) {
+        entry = {
+            count: 0,
+            firstRequest: now,
+            lastRequest: now,
+            suspiciousPatterns: {
+                rapidRequests: false,
+                unusualHours: false,
+                multipleUsers: false,
+                failedAuthAttempts: 0,
+            }
+        };
+        rateLimitStore.set(clientIP, entry);
+    }
+    // Update entry
+    entry.count++;
+    entry.lastRequest = now;
+    // Check for suspicious patterns
+    const timeSinceFirstRequest = now - entry.firstRequest;
+    const requestsPerMinute = (entry.count / timeSinceFirstRequest) * 60000;
+    // Rapid requests pattern
+    if (requestsPerMinute > 30) { // More than 30 requests per minute
+        entry.suspiciousPatterns.rapidRequests = true;
+    }
+    // Unusual hours (assuming business hours are 6 AM - 10 PM UTC)
+    const hour = new Date(now).getUTCHours();
+    if (hour < 6 || hour > 22) {
+        entry.suspiciousPatterns.unusualHours = true;
+    }
+    // Multiple users from same IP (potential account sharing)
+    if (userId !== 'anonymous') {
+        const usersFromIP = Array.from(rateLimitStore.entries())
+            .filter(([ip, data]) => ip === clientIP && data !== entry)
+            .length;
+        if (usersFromIP > 3) {
+            entry.suspiciousPatterns.multipleUsers = true;
+        }
+    }
+    // Check if IP is currently blocked
+    if (entry.blockedUntil && now < entry.blockedUntil) {
+        return res.status(429).json({
+            error: 'Too many requests - IP temporarily blocked',
+            retryAfter: Math.ceil((entry.blockedUntil - now) / 1000)
+        });
+    }
+    // Calculate risk score
+    let riskScore = 0;
+    if (entry.suspiciousPatterns.rapidRequests)
+        riskScore += 30;
+    if (entry.suspiciousPatterns.unusualHours)
+        riskScore += 10;
+    if (entry.suspiciousPatterns.multipleUsers)
+        riskScore += 20;
+    if (entry.suspiciousPatterns.failedAuthAttempts > 3)
+        riskScore += 25;
+    // Dynamic rate limiting based on risk score
+    const baseLimit = 100;
+    const adjustedLimit = Math.max(10, baseLimit - riskScore);
+    if (entry.count > adjustedLimit) {
+        // Block IP for increasing durations based on risk
+        const blockDuration = riskScore > 50 ? 3600000 : 900000; // 1 hour or 15 minutes
+        entry.blockedUntil = now + blockDuration;
+        // Log suspicious activity
+        console.warn(`Suspicious activity detected from IP ${clientIP}:`, {
+            riskScore,
+            patterns: entry.suspiciousPatterns,
+            requestsPerMinute,
+            userAgent: userAgent.substring(0, 100)
+        });
+        return res.status(429).json({
+            error: 'Suspicious activity detected - IP blocked',
+            retryAfter: Math.ceil(blockDuration / 1000)
+        });
+    }
+    // Clean up old entries periodically
+    if (Math.random() < 0.01) { // 1% chance per request
+        const cutoff = now - (24 * 60 * 60 * 1000); // 24 hours ago
+        for (const [ip, data] of rateLimitStore.entries()) {
+            if (data.lastRequest < cutoff) {
+                rateLimitStore.delete(ip);
+            }
+        }
+    }
+    next();
+};
+// Apply advanced rate limiting to sensitive endpoints
+app.use('/api/graphql', advancedRateLimiter);
+app.use('/auth', advancedRateLimiter);
 // Auth middleware
 const authenticateToken = (req, res, next) => {
     const authHeader = req.headers['authorization'];
@@ -164,7 +266,7 @@ const requireRole = (roles) => {
     };
 };
 // SIWE Verify endpoint
-app.post('/auth/verify', async (req, res) => {
+app.post('/api/auth/siwe', async (req, res) => {
     try {
         const { message, signature } = req.body;
         const siweMessage = new siwe_1.SiweMessage(message);
@@ -187,6 +289,143 @@ app.post('/auth/verify', async (req, res) => {
     catch (error) {
         console.error('SIWE verification error:', error);
         res.status(500).json({ error: 'Verification failed' });
+    }
+});
+// Email/Password Registration
+app.post('/api/auth/register', async (req, res) => {
+    try {
+        const { email, password, username } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
+        // Check if user already exists
+        const existingUserResponse = await fetch(`http://localhost:4001/users/check?email=${encodeURIComponent(email)}`);
+        if (existingUserResponse.ok) {
+            return res.status(409).json({ error: 'User already exists' });
+        }
+        // Hash password
+        const passwordHash = await bcryptjs_1.default.hash(password, 12);
+        // Create user in user service
+        const createUserResponse = await fetch('http://localhost:4001/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email,
+                passwordHash,
+                username,
+                role: 'user' // Default role
+            })
+        });
+        if (!createUserResponse.ok) {
+            return res.status(500).json({ error: 'Failed to create user' });
+        }
+        const user = await createUserResponse.json();
+        // Create JWT token
+        const token = jsonwebtoken_1.default.sign({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            role: user.role
+        }, JWT_SECRET, { expiresIn: '24h' });
+        res.status(201).json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    }
+    catch (error) {
+        console.error('Registration error:', error);
+        res.status(500).json({ error: 'Registration failed' });
+    }
+});
+// Email/Password Login
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { email, password } = req.body;
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email and password are required' });
+        }
+        // Get user from user service
+        const userResponse = await fetch(`http://localhost:4001/users/by-email/${encodeURIComponent(email)}`);
+        if (!userResponse.ok) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        const user = await userResponse.json();
+        // Verify password
+        if (!user.passwordHash || !(await bcryptjs_1.default.compare(password, user.passwordHash))) {
+            return res.status(401).json({ error: 'Invalid credentials' });
+        }
+        // Create JWT token
+        const token = jsonwebtoken_1.default.sign({
+            id: user.id,
+            email: user.email,
+            username: user.username,
+            role: user.role
+        }, JWT_SECRET, { expiresIn: '24h' });
+        res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+    }
+    catch (error) {
+        console.error('Login error:', error);
+        res.status(500).json({ error: 'Login failed' });
+    }
+});
+// Password Reset Request
+app.post('/api/auth/forgot-password', async (req, res) => {
+    try {
+        const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({ error: 'Email is required' });
+        }
+        // Check if user exists
+        const userResponse = await fetch(`http://localhost:4001/users/by-email/${encodeURIComponent(email)}`);
+        if (!userResponse.ok) {
+            // Don't reveal if email exists or not for security
+            return res.json({ message: 'If the email exists, a reset link has been sent' });
+        }
+        // Generate reset token
+        const resetToken = crypto_1.default.randomBytes(32).toString('hex');
+        const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+        // Store token (in production, save to database)
+        passwordResetTokens.set(resetToken, { email, expiresAt });
+        // In production, send email with reset link
+        // For now, just return the token for testing
+        console.log(`Password reset token for ${email}: ${resetToken}`);
+        res.json({ message: 'If the email exists, a reset link has been sent' });
+    }
+    catch (error) {
+        console.error('Forgot password error:', error);
+        res.status(500).json({ error: 'Failed to process request' });
+    }
+});
+// Password Reset
+app.post('/api/auth/reset-password', async (req, res) => {
+    try {
+        const { token, newPassword } = req.body;
+        if (!token || !newPassword) {
+            return res.status(400).json({ error: 'Token and new password are required' });
+        }
+        // Verify token
+        const tokenData = passwordResetTokens.get(token);
+        if (!tokenData || tokenData.expiresAt < new Date()) {
+            return res.status(400).json({ error: 'Invalid or expired token' });
+        }
+        // Hash new password
+        const passwordHash = await bcryptjs_1.default.hash(newPassword, 12);
+        // Update user password
+        const updateResponse = await fetch(`http://localhost:4001/users/reset-password`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                email: tokenData.email,
+                passwordHash
+            })
+        });
+        if (!updateResponse.ok) {
+            return res.status(500).json({ error: 'Failed to update password' });
+        }
+        // Remove used token
+        passwordResetTokens.delete(token);
+        res.json({ message: 'Password updated successfully' });
+    }
+    catch (error) {
+        console.error('Reset password error:', error);
+        res.status(500).json({ error: 'Failed to reset password' });
     }
 });
 // GitHub OAuth routes
@@ -336,8 +575,45 @@ app.put('/admin/challenges/:id', authenticateToken, requireRole(['admin']), asyn
         res.status(500).json({ error: 'Failed to update challenge' });
     }
 });
+// Admin User Management Endpoints
+app.get('/admin/users', authenticateToken, requireRole(['admin']), async (req, res) => {
+    try {
+        const response = await fetch('http://localhost:4001/admin/users', {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error fetching users:', error);
+        res.status(500).json({ error: 'Failed to fetch users' });
+    }
+});
+app.put('/admin/users/:userId/role', authenticateToken, requireRole(['admin']), async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const { role } = req.body;
+        if (!['user', 'creator', 'admin'].includes(role)) {
+            return res.status(400).json({ error: 'Invalid role. Must be user, creator, or admin' });
+        }
+        const response = await fetch(`http://localhost:4001/admin/users/${userId}/role`, {
+            method: 'PUT',
+            headers: {
+                'Authorization': req.headers.authorization,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ role })
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error updating user role:', error);
+        res.status(500).json({ error: 'Failed to update user role' });
+    }
+});
 // Author routes (for creating content, perhaps challenges or marketplace items)
-app.post('/author/challenges', authenticateToken, requireRole(['admin', 'author']), async (req, res) => {
+app.post('/author/challenges', authenticateToken, requireRole(['admin', 'creator']), async (req, res) => {
     try {
         const response = await fetch('http://localhost:4002/challenges', {
             method: 'POST',
@@ -391,7 +667,132 @@ app.post('/submit', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'Failed to submit solution' });
     }
 });
+// GET /api/challenges — list/search challenges
+app.get('/api/challenges', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch(`http://localhost:4002/challenges?${new URLSearchParams(req.query)}`, {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error fetching challenges:', error);
+        res.status(500).json({ error: 'Failed to fetch challenges' });
+    }
+});
+// GET /api/challenges/:slug — challenge metadata
+app.get('/api/challenges/:slug', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch(`http://localhost:4002/challenges/${req.params.slug}`, {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error fetching challenge:', error);
+        res.status(500).json({ error: 'Failed to fetch challenge' });
+    }
+});
+// POST /api/submissions — submit code for grading
+app.post('/api/submissions', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch('http://localhost:4006/submit', {
+            method: 'POST',
+            headers: {
+                'Authorization': req.headers.authorization,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(req.body)
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error submitting code:', error);
+        res.status(500).json({ error: 'Failed to submit code' });
+    }
+});
+// GET /api/submissions/:id — result & artifacts
+app.get('/api/submissions/:id', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch(`http://localhost:4006/submit/${req.params.id}`, {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error fetching submission:', error);
+        res.status(500).json({ error: 'Failed to fetch submission' });
+    }
+});
+// POST /api/authors/challenges — create challenge (auth: author)
+app.post('/api/authors/challenges', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch('http://localhost:4002/challenges', {
+            method: 'POST',
+            headers: {
+                'Authorization': req.headers.authorization,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(req.body)
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error creating challenge:', error);
+        res.status(500).json({ error: 'Failed to create challenge' });
+    }
+});
+// POST /api/hire/rooms — create private hiring room
+app.post('/api/hire/rooms', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch('http://localhost:4004/assessment/rooms', {
+            method: 'POST',
+            headers: {
+                'Authorization': req.headers.authorization,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(req.body)
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error creating hiring room:', error);
+        res.status(500).json({ error: 'Failed to create hiring room' });
+    }
+});
 app.listen(PORT, () => {
     console.log(`API Gateway running on port ${PORT}`);
+});
+// WebSocket server for real-time job updates
+const wss = new ws_1.WebSocketServer({ port: 4008 }); // Use port 4008 for WS on gateway
+wss.on('connection', (ws) => {
+    console.log('WebSocket client connected to gateway');
+    // Connect to grader WS
+    const graderWs = new ws_2.default('ws://localhost:4007');
+    graderWs.on('open', () => {
+        console.log('Connected to grader WS');
+    });
+    graderWs.on('message', (data) => {
+        ws.send(data);
+    });
+    graderWs.on('close', () => {
+        ws.close();
+    });
+    graderWs.on('error', (error) => {
+        console.error('Grader WS error:', error);
+        ws.close();
+    });
+    ws.on('message', (message) => {
+        graderWs.send(message);
+    });
+    ws.on('close', () => {
+        graderWs.close();
+    });
 });
 exports.default = app;

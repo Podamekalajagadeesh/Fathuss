@@ -33,6 +33,11 @@ impl FixtureManager {
     }
 
     pub async fn fetch_challenge_fixtures(&self, challenge_id: &str) -> Result<Vec<TestFixture>, String> {
+        // Check if challenge_id is a local path (starts with /)
+        if challenge_id.starts_with('/') {
+            return self.fetch_local_fixtures(challenge_id).await;
+        }
+
         let fixtures_url = format!("{}/challenges/{}/fixtures", self.fixtures_base_url, challenge_id);
 
         // Try to get from cache first
@@ -61,6 +66,28 @@ impl FixtureManager {
 
         // Cache the fixtures
         self.cache_fixtures(&cache_key, &fixtures).await?;
+
+        Ok(fixtures)
+    }
+
+    async fn fetch_local_fixtures(&self, local_path: &str) -> Result<Vec<TestFixture>, String> {
+        // For local testing, create basic fixtures from the test files
+        let test_dir = Path::new(local_path).join("test");
+        let mut fixtures = Vec::new();
+
+        if test_dir.exists() {
+            // Simple fixture: run the test file
+            fixtures.push(TestFixture {
+                id: "basic_test".to_string(),
+                name: "Basic Test".to_string(),
+                description: "Run the basic test suite".to_string(),
+                input: json!({}),
+                expected_output: json!({"success": true}),
+                hidden: false,
+                timeout: 30000, // 30 seconds
+                gas_limit: 10000000,
+            });
+        }
 
         Ok(fixtures)
     }

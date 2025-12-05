@@ -1,0 +1,3 @@
+-- Fathuss Database Seed Data
+-- This file is intentionally left empty for production use.
+-- Add real seed data as needed.

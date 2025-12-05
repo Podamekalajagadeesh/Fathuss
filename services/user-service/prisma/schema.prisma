@@ -12,19 +12,21 @@ model User {
   id                    String   @id @default(uuid())
   address               String   @unique
   username              String?  @unique
-  email                 String?
+  email                 String?  @unique
+  passwordHash          String?
+  role                  String   @default("user") // user, creator, admin
   avatarUrl             String?
   bio                   String?
   level                 Int      @default(1)
-  experiencePoints      Int      @default(0)
+  experiencePoints      Int      @default(0) // xp
   totalScore            Float    @default(0)
   challengesCompleted   Int      @default(0)
   reputation            Int      @default(0)
-  currentStreak         Int      @default(0)
+  currentStreak         Int      @default(0) // streak
   longestStreak         Int      @default(0)
   lastActivityAt        DateTime?
-  joinedAt              DateTime @default(now())
-  updatedAt             DateTime @updatedAt
+  createdAt             DateTime @default(now()) // created_at
+  updatedAt             DateTime @updatedAt // updated_at
 
   // Wallet linkages
   linkedWallets         LinkedWallet[]

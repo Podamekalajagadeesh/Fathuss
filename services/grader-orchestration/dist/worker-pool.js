@@ -121,8 +121,8 @@ class WorkerPoolManager {
     }
     async createFirecrackerWorker(worker) {
         // Firecracker implementation would go here
-        // This is a placeholder - actual Firecracker setup is complex
-        // Would involve creating VM, setting up networking, etc.
+        // Firecracker setup is complex and requires additional dependencies
+        // For now, throw an error indicating it's not implemented
         throw new Error('Firecracker implementation not yet complete');
     }
     getDockerConfig(workerType) {

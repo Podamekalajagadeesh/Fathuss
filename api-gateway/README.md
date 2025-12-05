@@ -30,9 +30,9 @@ Node.js/TypeScript API Gateway with SIWE Authentication
 - `POST /auth/verify` - Verify SIWE signature and get JWT
 - `GET /protected` - Protected route example
 - `GET /health` - Health check
-- `POST /graphql` - GraphQL endpoint (placeholder)
-- `GET /challenges` - Get challenges (placeholder)
-- `POST /submit` - Submit challenge (placeholder)
+- `POST /graphql` - GraphQL endpoint
+- `GET /challenges` - Get challenges
+- `POST /submit` - Submit challenge
 
 ## Authentication
 

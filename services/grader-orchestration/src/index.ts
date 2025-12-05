@@ -119,7 +119,7 @@ async function initializeServices() {
 // Get queue position for a job
 async function getQueuePosition(jobId: string): Promise<number> {
   try {
-    const job = await prisma.gradingJob.findUnique({
+    const job = await prisma.GradingJob.findUnique({
       where: { jobId },
       select: { submittedAt: true, status: true }
     });
@@ -129,7 +129,7 @@ async function getQueuePosition(jobId: string): Promise<number> {
     }
 
     // Count jobs submitted before this one that are still queued
-    const position = await prisma.gradingJob.count({
+    const position = await prisma.GradingJob.count({
       where: {
         status: 'QUEUED',
         submittedAt: { lt: job.submittedAt }
@@ -343,7 +343,7 @@ app.post('/submit', authenticateToken, async (req: Request, res: Response) => {
     const jobId = `job_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     // Create database record
-    const dbJob = await prisma.gradingJob.create({
+    const dbJob = await prisma.GradingJob.create({
       data: {
         jobId,
         challengeId,
@@ -411,7 +411,7 @@ app.get('/submit/:jobId', authenticateToken, async (req: Request, res: Response)
       job = JSON.parse(jobData);
     } else {
       // Fallback to database
-      const dbJob = await prisma.gradingJob.findUnique({
+      const dbJob = await prisma.GradingJob.findUnique({
         where: { jobId }
       });
 
@@ -481,17 +481,17 @@ app.get('/queue/status', async (req: Request, res: Response) => {
   try {
     // Get queue statistics
     const queueInfo = await rabbitmqChannel.checkQueue('grading_jobs');
-    const activeJobs = await prisma.gradingJob.count({
+    const activeJobs = await prisma.GradingJob.count({
       where: { status: { in: ['QUEUED', 'PROCESSING'] } }
     });
 
     const status = {
       queued: queueInfo.messageCount,
       processing: activeJobs,
-      completed: await prisma.gradingJob.count({ where: { status: 'COMPLETED' } }),
-      failed: await prisma.gradingJob.count({ where: { status: 'FAILED' } }),
+      completed: await prisma.GradingJob.count({ where: { status: 'COMPLETED' } }),
+      failed: await prisma.GradingJob.count({ where: { status: 'FAILED' } }),
       averageWaitTime: 45, // seconds - could be calculated from actual data
-      totalJobs: await prisma.gradingJob.count()
+      totalJobs: await prisma.GradingJob.count()
     };
 
     res.json(status);
@@ -570,7 +570,7 @@ async function processGradingJob(jobId: string, payload: any, workerType: Worker
     }
 
     // Update database status
-    await prisma.gradingJob.update({
+    await prisma.GradingJob.update({
       where: { jobId },
       data: {
         status: 'PROCESSING',
@@ -708,7 +708,7 @@ async function processGradingJob(jobId: string, payload: any, workerType: Worker
     await redisClient.setEx(`job:${jobId}`, 3600, JSON.stringify(updatedJob));
 
     // Update database with results
-    await prisma.gradingJob.update({
+    await prisma.GradingJob.update({
       where: { jobId },
       data: {
         status: 'COMPLETED',
@@ -767,7 +767,7 @@ async function processGradingJob(jobId: string, payload: any, workerType: Worker
     }
 
     // Update database with failure
-    await prisma.gradingJob.update({
+    await prisma.GradingJob.update({
       where: { jobId },
       data: {
         status: 'FAILED',

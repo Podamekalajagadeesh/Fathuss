@@ -82,7 +82,7 @@ app.get('/users/:address', authenticateToken, async (req, res) => {
       currentStreak: user.currentStreak,
       longestStreak: user.longestStreak,
       lastActivityAt: user.lastActivityAt,
-      joinedAt: user.joinedAt,
+      joinedAt: user.createdAt,
       linkedWallets: user.linkedWallets,
       badges: user.badges.map(ub => ({
         ...ub.badge,
@@ -547,6 +547,211 @@ app.get('/users/:address/rank', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching user rank:', error);
     res.status(500).json({ error: 'Failed to fetch user rank' });
+  }
+});
+
+// Create user (for email/password registration)
+app.post('/users', async (req, res) => {
+  try {
+    const { email, passwordHash, username, role = 'user' } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Generate a temporary address for email-based users (can be updated later if they connect wallet)
+    const tempAddress = `email_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const user = await prisma.user.create({
+      data: {
+        address: tempAddress,
+        email,
+        passwordHash,
+        username,
+        role
+      }
+    });
+
+    res.status(201).json({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      role: user.role,
+      createdAt: user.createdAt
+    });
+  } catch (error) {
+    console.error('Error creating user:', error);
+    if ((error as any).code === 'P2002') {
+      res.status(409).json({ error: 'User already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to create user' });
+    }
+  }
+});
+
+// Check if user exists by email
+app.get('/users/check', async (req, res) => {
+  try {
+    const { email } = req.query;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: email as string }
+    });
+
+    if (user) {
+      res.json({ exists: true });
+    } else {
+      res.status(404).json({ exists: false });
+    }
+  } catch (error) {
+    console.error('Error checking user:', error);
+    res.status(500).json({ error: 'Failed to check user' });
+  }
+});
+
+// Get user by email
+app.get('/users/by-email/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { email: email.toLowerCase() }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      id: user.id,
+      email: user.email,
+      username: user.username,
+      passwordHash: user.passwordHash,
+      role: user.role,
+      avatarUrl: user.avatarUrl,
+      experiencePoints: user.experiencePoints,
+      currentStreak: user.currentStreak,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt
+    });
+  } catch (error) {
+    console.error('Error fetching user by email:', error);
+    res.status(500).json({ error: 'Failed to fetch user' });
+  }
+});
+
+// Reset user password
+app.post('/users/reset-password', async (req, res) => {
+  try {
+    const { email, passwordHash } = req.body;
+
+    if (!email || !passwordHash) {
+      return res.status(400).json({ error: 'Email and password hash are required' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { email: email.toLowerCase() },
+      data: { passwordHash, updatedAt: new Date() }
+    });
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
+// Update user password (for password reset)
+app.post('/users/reset-password', async (req, res) => {
+  try {
+    const { email, passwordHash } = req.body;
+
+    if (!email || !passwordHash) {
+      return res.status(400).json({ error: 'Email and password hash are required' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { email: email.toLowerCase() },
+      data: { passwordHash },
+      select: {
+        id: true,
+        email: true,
+        username: true,
+        updatedAt: true
+      }
+    });
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    if ((error as any).code === 'P2025') {
+      res.status(404).json({ error: 'User not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to reset password' });
+    }
+  }
+});
+
+// Admin User Management Endpoints
+app.get('/admin/users', async (req, res) => {
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        address: true,
+        username: true,
+        email: true,
+        role: true,
+        avatarUrl: true,
+        experiencePoints: true,
+        currentStreak: true,
+        createdAt: true,
+        updatedAt: true
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.put('/admin/users/:userId/role', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    if (!['user', 'creator', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Must be user, creator, or admin' });
+    }
+
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { role },
+      select: {
+        id: true,
+        address: true,
+        username: true,
+        email: true,
+        role: true,
+        updatedAt: true
+      }
+    });
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error('Error updating user role:', error);
+    if ((error as any).code === 'P2025') {
+      res.status(404).json({ error: 'User not found' });
+    } else {
+      res.status(500).json({ error: 'Failed to update user role' });
+    }
   }
 });
 

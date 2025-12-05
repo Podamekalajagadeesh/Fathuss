@@ -10,6 +10,7 @@ datasource db {
 
 model Challenge {
   id              String   @id @default(uuid())
+  slug            String   @unique
   title           String
   description     String?
   shortDescription String?

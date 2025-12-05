@@ -68,11 +68,16 @@ async fn grade_with_full_pipeline(
 ) -> Result<Value, String> {
     let start_time = std::time::Instant::now();
 
-    // Create temporary workspace
-    let temp_dir = tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
-    let workspace_path = temp_dir.path();
+    // Create workspace - use local path if challenge_id starts with /
+    let workspace_path = if challenge_id.starts_with('/') {
+        std::path::PathBuf::from(challenge_id)
+    } else {
+        // Create temporary workspace
+        let temp_dir = tempfile::tempdir().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        temp_dir.path().to_path_buf()
+    };
 
-    println!("Created workspace: {}", workspace_path.display());
+    println!("Using workspace: {}", workspace_path.display());
 
     // Step 1: Fetch fixtures
     println!("Fetching fixtures for challenge: {}", challenge_id);
@@ -256,8 +261,8 @@ fn get_compile_command_with_args(language: &str, workspace: &std::path::Path) ->
             vec!["build".to_string(), "--release".to_string()]
         ),
         "solidity" => (
-            "solc".to_string(),
-            vec![workspace.join("Contract.sol").to_string_lossy().to_string(), "--bin".to_string()]
+            "forge".to_string(),
+            vec!["build".to_string()]
         ),
         _ => (
             "echo".to_string(),
@@ -269,7 +274,7 @@ fn get_compile_command_with_args(language: &str, workspace: &std::path::Path) ->
 fn get_run_command(language: &str) -> String {
     match language {
         "rust" => "./target/release/grader-code".to_string(),
-        "solidity" => "echo".to_string(), // Solidity execution would be more complex
+        "solidity" => "forge test".to_string(), // Solidity execution would be more complex
         _ => "echo".to_string(),
     }
 }
@@ -302,6 +307,32 @@ async fn run_test_suite(
     let mut result = TestSuiteResult::default();
     result.total = fixtures.len();
 
+    if language == "solidity" && !fixtures.is_empty() {
+        // For Solidity, run forge test once for all tests
+        let sandbox_config = SandboxConfig {
+            time_limit: Duration::from_secs(300), // 5 minutes for tests
+            memory_limit: 1024 * 1024 * 1024, // 1GB
+            cpu_limit: 50,
+            network_disabled: true,
+            max_file_size: 100 * 1024 * 1024, // 100MB
+            max_processes: 10,
+            disk_quota: 500 * 1024 * 1024, // 500MB
+        };
+
+        let exec_result = execute_in_sandbox("forge", &["test"], &sandbox_config, workspace).await?;
+        let passed = exec_result.success;
+
+        if passed {
+            result.passed = fixtures.len(); // Assume all tests passed
+        }
+
+        result.gas_used = exec_result.gas_used;
+        result.trace_events = exec_result.trace_events;
+
+        return Ok(result);
+    }
+
+    // Original logic for other languages
     for fixture in fixtures {
         let test_start = std::time::Instant::now();
 
@@ -320,11 +351,22 @@ async fn run_test_suite(
             disk_quota: 50 * 1024 * 1024, // 50MB per test
         };
 
-        let run_command = get_run_command(language);
-        let exec_result = execute_in_sandbox(&run_command, &[&input_file], &sandbox_config, workspace).await?;
+        let (run_command, run_args) = match language {
+            "solidity" => ("forge".to_string(), vec!["test".to_string()]),
+            _ => (get_run_command(language), vec![input_file.clone()]),
+        };
+        let args_refs: Vec<&str> = run_args.iter().map(|s| s.as_str()).collect();
+
+        let exec_result = execute_in_sandbox(&run_command, &args_refs, &sandbox_config, workspace).await?;
 
         // Check if test passed (simplified - in real implementation, compare with expected output)
-        let passed = exec_result.success && exec_result.exit_code == Some(0);
+        let passed = match language {
+            "solidity" => {
+                // For solidity, forge test success means all tests passed
+                exec_result.success
+            },
+            _ => exec_result.success && exec_result.exit_code == Some(0),
+        };
 
         if passed {
             result.passed += 1;

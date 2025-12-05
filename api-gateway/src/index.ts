@@ -5,12 +5,15 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { SiweMessage } from 'siwe';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { ethers } from 'ethers';
 import passport from 'passport';
 import { Strategy as GitHubStrategy } from 'passport-github2';
 import session from 'express-session';
 import { graphqlHTTP } from 'express-graphql';
 import { buildSchema } from 'graphql';
+import { WebSocketServer } from 'ws';
 import WebSocket from 'ws';
 
 dotenv.config();
@@ -18,6 +21,22 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+interface User {
+  id: string;
+  email: string;
+  username?: string;
+  passwordHash?: string;
+  role: string;
+  avatarUrl?: string;
+  experiencePoints: number;
+  currentStreak: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// In-memory store for password reset tokens (in production, use Redis or database)
+const passwordResetTokens = new Map<string, { email: string; expiresAt: Date }>();
 
 // GraphQL Schema
 const schema = buildSchema(`
@@ -332,6 +351,178 @@ app.post('/api/auth/siwe', async (req, res) => {
   }
 });
 
+// Email/Password Registration
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, username } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Check if user already exists
+    const existingUserResponse = await fetch(`http://localhost:4001/users/check?email=${encodeURIComponent(email)}`);
+    if (existingUserResponse.ok) {
+      return res.status(409).json({ error: 'User already exists' });
+    }
+
+    // Hash password
+    const passwordHash = await bcrypt.hash(password, 12);
+
+    // Create user in user service
+    const createUserResponse = await fetch('http://localhost:4001/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email,
+        passwordHash,
+        username,
+        role: 'user' // Default role
+      })
+    });
+
+    if (!createUserResponse.ok) {
+      return res.status(500).json({ error: 'Failed to create user' });
+    }
+
+    const user = await createUserResponse.json() as User;
+
+    // Create JWT token
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (error) {
+    console.error('Registration error:', error);
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+// Email/Password Login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Get user from user service
+    const userResponse = await fetch(`http://localhost:4001/users/by-email/${encodeURIComponent(email)}`);
+    if (!userResponse.ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const user = await userResponse.json() as User;
+
+    // Verify password
+    if (!user.passwordHash || !(await bcrypt.compare(password, user.passwordHash))) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Create JWT token
+    const token = jwt.sign(
+      {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        role: user.role
+      },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({ token, user: { id: user.id, email: user.email, username: user.username } });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Password Reset Request
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+
+    // Check if user exists
+    const userResponse = await fetch(`http://localhost:4001/users/by-email/${encodeURIComponent(email)}`);
+    if (!userResponse.ok) {
+      // Don't reveal if email exists or not for security
+      return res.json({ message: 'If the email exists, a reset link has been sent' });
+    }
+
+    // Generate reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    // Store token (in production, save to database)
+    passwordResetTokens.set(resetToken, { email, expiresAt });
+
+    // In production, send email with reset link
+    // For now, just return the token for testing
+    console.log(`Password reset token for ${email}: ${resetToken}`);
+
+    res.json({ message: 'If the email exists, a reset link has been sent' });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Failed to process request' });
+  }
+});
+
+// Password Reset
+app.post('/api/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    if (!token || !newPassword) {
+      return res.status(400).json({ error: 'Token and new password are required' });
+    }
+
+    // Verify token
+    const tokenData = passwordResetTokens.get(token);
+    if (!tokenData || tokenData.expiresAt < new Date()) {
+      return res.status(400).json({ error: 'Invalid or expired token' });
+    }
+
+    // Hash new password
+    const passwordHash = await bcrypt.hash(newPassword, 12);
+
+    // Update user password
+    const updateResponse = await fetch(`http://localhost:4001/users/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: tokenData.email,
+        passwordHash
+      })
+    });
+
+    if (!updateResponse.ok) {
+      return res.status(500).json({ error: 'Failed to update password' });
+    }
+
+    // Remove used token
+    passwordResetTokens.delete(token);
+
+    res.json({ message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
+  }
+});
+
 // GitHub OAuth routes
 app.get('/auth/github',
   passport.authenticate('github', { scope: ['user:email'] })
@@ -494,8 +685,48 @@ app.put('/admin/challenges/:id', authenticateToken, requireRole(['admin']), asyn
   }
 });
 
+// Admin User Management Endpoints
+app.get('/admin/users', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const response = await fetch('http://localhost:4001/admin/users', {
+      headers: { 'Authorization': req.headers.authorization! }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+app.put('/admin/users/:userId/role', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role } = req.body;
+
+    if (!['user', 'creator', 'admin'].includes(role)) {
+      return res.status(400).json({ error: 'Invalid role. Must be user, creator, or admin' });
+    }
+
+    const response = await fetch(`http://localhost:4001/admin/users/${userId}/role`, {
+      method: 'PUT',
+      headers: {
+        'Authorization': req.headers.authorization!,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ role })
+    });
+
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error updating user role:', error);
+    res.status(500).json({ error: 'Failed to update user role' });
+  }
+});
+
 // Author routes (for creating content, perhaps challenges or marketplace items)
-app.post('/author/challenges', authenticateToken, requireRole(['admin', 'author']), async (req, res) => {
+app.post('/author/challenges', authenticateToken, requireRole(['admin', 'creator']), async (req, res) => {
   try {
     const response = await fetch('http://localhost:4002/challenges', {
       method: 'POST',
@@ -648,16 +879,14 @@ app.post('/api/hire/rooms', authenticateToken, async (req, res) => {
   }
 });
 
-});
-
 app.listen(PORT, () => {
   console.log(`API Gateway running on port ${PORT}`);
 });
 
 // WebSocket server for real-time job updates
-const wss = new WebSocket.Server({ port: 4008 }); // Use port 4008 for WS on gateway
+const wss = new WebSocketServer({ port: 4008 }); // Use port 4008 for WS on gateway
 
-wss.on('connection', (ws: WebSocket) => {
+wss.on('connection', (ws) => {
   console.log('WebSocket client connected to gateway');
 
   // Connect to grader WS

@@ -9,6 +9,44 @@
 
 Fathuss is a cutting-edge platform designed for Web3 enthusiasts, developers, and organizations to engage in Capture The Flag (CTF) challenges, continuous learning, talent hiring, and automated grading across multiple blockchain networks.
 
+## 🛠️ Technology Stack
+
+### Frontend
+- **TypeScript + Next.js + React + Monaco Editor**
+
+### Backend API
+- **TypeScript (Node.js / NestJS or tRPC)** for core services
+
+### Grader / Worker
+- **Rust** (for safety/perf) or Go as alternative
+
+### Smart Contracts & Tooling
+- **Solidity (Foundry + Forge + Anvil), Hardhat, Slither, Echidna**
+
+### Other Chains
+- **Solana (Rust), Move (Aptos/Sui), BPF toolchain**
+
+### Containers
+- **Docker**; microVMs (Firecracker) optional for extra isolation
+
+### Orchestration
+- **Kubernetes**
+
+### Database
+- **PostgreSQL** (primary), **Redis** (cache/locks), **ClickHouse** (analytics)
+
+### Storage
+- **IPFS** (NFT.Storage / Web3.Storage) + S3 as fallback
+
+### Messaging
+- **Kafka or RabbitMQ**
+
+### Authentication
+- **SIWE, GitHub OAuth, optional email login**
+
+### CI/CD
+- **GitHub Actions / GitLab CI + ArgoCD** for K8s deploys
+
 ## 🏗️ Architecture
 
 Fathuss is a distributed platform with three main user-facing surfaces and several backend subsystems:
@@ -138,7 +176,19 @@ NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_walletconnect_project_id
 NEXT_PUBLIC_API_GATEWAY_URL=http://localhost:4000
 ```
 
+Create a `.env` file in the `api-gateway` directory and add:
+
+```env
+JWT_SECRET=your-jwt-secret-key
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+GITHUB_CALLBACK_URL=http://localhost:4000/auth/github/callback
+FRONTEND_URL=http://localhost:3000
+```
+
 Get your WalletConnect Project ID from [WalletConnect Cloud](https://cloud.walletconnect.com/).
+
+For GitHub OAuth, create an OAuth App at [GitHub Developer Settings](https://github.com/settings/developers) and set the callback URL to `http://localhost:4000/auth/github/callback`.
 
 ### Running the Platform
 

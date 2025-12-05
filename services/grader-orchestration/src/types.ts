@@ -35,14 +35,76 @@ export interface GradingJob {
     testCases: any[];
     challengeId: string;
     userId: string;
+    metadata?: {
+      gasLimit?: number;
+      timeLimit?: number;
+      enableTracing?: boolean;
+      checkPlagiarism?: boolean;
+    };
   };
   workerType: WorkerType;
   assignedWorkerId?: string;
   status: 'queued' | 'processing' | 'completed' | 'failed';
   submittedAt: Date;
   completedAt?: Date;
-  result?: any;
+  result?: GradingResult;
   error?: string;
+}
+
+export interface GradingResult {
+  jobId: string;
+  status: 'completed' | 'failed';
+  score: number;
+  passedTests: number;
+  totalTests: number;
+  gasUsed?: number;
+  timeUsed?: number;
+  executionTrace?: ExecutionTrace;
+  plagiarismCheck?: PlagiarismResult;
+  output: string;
+  error?: string;
+  language: string;
+}
+
+export interface ExecutionTrace {
+  events: TraceEvent[];
+  gasProfile: GasProfile[];
+  callStack: CallFrame[];
+  storageAccess: StorageAccess[];
+}
+
+export interface TraceEvent {
+  timestamp: number;
+  eventType: string;
+  data: any;
+  gasUsed: number;
+}
+
+export interface GasProfile {
+  operation: string;
+  gasUsed: number;
+  gasLimit: number;
+}
+
+export interface CallFrame {
+  functionName: string;
+  parameters: any[];
+  returnValue?: any;
+  gasUsed: number;
+}
+
+export interface StorageAccess {
+  operation: 'read' | 'write';
+  key: string;
+  value?: string;
+  gasUsed: number;
+}
+
+export interface PlagiarismResult {
+  isPlagiarized: boolean;
+  similarityScore: number;
+  matchedSources: string[];
+  confidence: number;
 }
 
 export interface WorkerPoolConfig {

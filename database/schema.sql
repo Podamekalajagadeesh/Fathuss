@@ -7,81 +7,79 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 -- Users table
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    address VARCHAR(42) UNIQUE NOT NULL,
-    username VARCHAR(50) UNIQUE,
+    wallet_address VARCHAR(42) UNIQUE NOT NULL,
     email VARCHAR(255),
-    avatar_url TEXT,
-    bio TEXT,
-    level INTEGER DEFAULT 1,
-    experience_points INTEGER DEFAULT 0,
-    total_score DECIMAL(10,2) DEFAULT 0,
-    challenges_completed INTEGER DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    display_name VARCHAR(50) UNIQUE,
+    xp INTEGER DEFAULT 0,
+    rank INTEGER DEFAULT 1,
+    github_id VARCHAR(50),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Challenges table
 CREATE TABLE IF NOT EXISTS challenges (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    slug VARCHAR(100) UNIQUE NOT NULL,
     title VARCHAR(255) NOT NULL,
-    description TEXT,
     difficulty VARCHAR(20) CHECK (difficulty IN ('easy', 'medium', 'hard', 'expert')),
-    category VARCHAR(50),
-    language VARCHAR(50),
-    time_limit INTEGER, -- in seconds
-    memory_limit INTEGER, -- in MB
-    test_cases JSONB,
-    solution_template TEXT,
-    hints JSONB,
     tags TEXT[],
-    is_active BOOLEAN DEFAULT true,
-    created_by UUID REFERENCES users(id),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
--- Submissions table
-CREATE TABLE IF NOT EXISTS submissions (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    challenge_id UUID REFERENCES challenges(id),
-    user_id UUID REFERENCES users(id),
-    code TEXT NOT NULL,
-    language VARCHAR(50),
-    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
-    score DECIMAL(5,2),
-    execution_time INTEGER, -- in milliseconds
-    memory_used INTEGER, -- in KB
-    error_message TEXT,
-    submitted_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    completed_at TIMESTAMP WITH TIME ZONE
-);
-
--- Leaderboard table
-CREATE TABLE IF NOT EXISTS leaderboard (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    user_id UUID REFERENCES users(id),
-    challenge_id UUID REFERENCES challenges(id),
-    score DECIMAL(5,2) NOT NULL,
-    rank INTEGER,
-    category VARCHAR(50),
-    period VARCHAR(20) CHECK (period IN ('daily', 'weekly', 'monthly', 'all_time')),
+    author_id UUID REFERENCES users(id),
+    version INTEGER DEFAULT 1,
+    ipfs_manifest_cid VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Marketplace items table
-CREATE TABLE IF NOT EXISTS marketplace_items (
+-- Challenge versions table
+CREATE TABLE IF NOT EXISTS challenge_versions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    price DECIMAL(10,2),
-    currency VARCHAR(10) DEFAULT 'ETH',
-    item_type VARCHAR(50) CHECK (item_type IN ('nft', 'template', 'tool', 'service')),
-    metadata JSONB,
-    seller_id UUID REFERENCES users(id),
-    buyer_id UUID REFERENCES users(id),
-    status VARCHAR(20) DEFAULT 'available' CHECK (status IN ('available', 'sold', 'cancelled')),
+    challenge_id UUID REFERENCES challenges(id),
+    content_cid VARCHAR(100),
+    tests_cid VARCHAR(100),
+    fixtures_cid VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived'))
+);
+
+-- Jobs (submissions) table
+CREATE TABLE IF NOT EXISTS jobs (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id),
+    challenge_id UUID REFERENCES challenges(id),
+    language VARCHAR(50),
+    code_blob_uri VARCHAR(255),
+    status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    score DECIMAL(5,2),
+    gas_used INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    completed_at TIMESTAMP WITH TIME ZONE
+);
+
+-- Leaderboard entries table
+CREATE TABLE IF NOT EXISTS leaderboard_entries (
+    user_id UUID REFERENCES users(id),
+    challenge_id UUID REFERENCES challenges(id),
+    best_score DECIMAL(5,2),
+    fastest_time INTEGER, -- in milliseconds
+    best_gas INTEGER,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    PRIMARY KEY (user_id, challenge_id)
+);
+
+-- Audit traces table
+CREATE TABLE IF NOT EXISTS audit_traces (
+    job_id UUID PRIMARY KEY REFERENCES jobs(id),
+    trace_uri VARCHAR(255),
+    replayable_bundle_uri VARCHAR(255)
+);
+
+-- Payments / marketplace table
+CREATE TABLE IF NOT EXISTS payments (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    author_id UUID REFERENCES users(id),
+    amount DECIMAL(10,2),
+    split DECIMAL(5,2), -- percentage or something
+    minted_nft_contract VARCHAR(42),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
 -- Jobs table (for hiring service)
@@ -136,17 +134,21 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 -- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_users_address ON users(address);
-CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+CREATE INDEX IF NOT EXISTS idx_users_wallet_address ON users(wallet_address);
+CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
+CREATE INDEX IF NOT EXISTS idx_users_github_id ON users(github_id);
+CREATE INDEX IF NOT EXISTS idx_challenges_slug ON challenges(slug);
 CREATE INDEX IF NOT EXISTS idx_challenges_difficulty ON challenges(difficulty);
-CREATE INDEX IF NOT EXISTS idx_challenges_category ON challenges(category);
-CREATE INDEX IF NOT EXISTS idx_challenges_language ON challenges(language);
-CREATE INDEX IF NOT EXISTS idx_submissions_challenge_user ON submissions(challenge_id, user_id);
-CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
-CREATE INDEX IF NOT EXISTS idx_leaderboard_user ON leaderboard(user_id);
-CREATE INDEX IF NOT EXISTS idx_leaderboard_challenge ON leaderboard(challenge_id);
-CREATE INDEX IF NOT EXISTS idx_marketplace_items_seller ON marketplace_items(seller_id);
-CREATE INDEX IF NOT EXISTS idx_marketplace_items_status ON marketplace_items(status);
+CREATE INDEX IF NOT EXISTS idx_challenges_author_id ON challenges(author_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_versions_challenge_id ON challenge_versions(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_challenge_versions_status ON challenge_versions(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs(user_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_challenge_id ON jobs(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_entries_user_id ON leaderboard_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_leaderboard_entries_challenge_id ON leaderboard_entries(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_audit_traces_job_id ON audit_traces(job_id);
+CREATE INDEX IF NOT EXISTS idx_payments_author_id ON payments(author_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_poster ON jobs(poster_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_active ON jobs(is_active);
 CREATE INDEX IF NOT EXISTS idx_job_applications_job ON job_applications(job_id);

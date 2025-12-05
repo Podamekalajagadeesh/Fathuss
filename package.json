@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest",
     "api:dev": "cd api-gateway && npm run dev",
     "api:install": "cd api-gateway && npm install",
     "api:build": "cd api-gateway && npm run build",
@@ -42,6 +43,9 @@
     "@apollo/client": "^3.9.9",
     "graphql": "^16.8.1",
     "axios": "^1.6.7",
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "jest": "^29.7.0",
+    "@types/jest": "^29.5.12",
+    "ts-jest": "^29.1.2"
   }
 }

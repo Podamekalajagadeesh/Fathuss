@@ -48,7 +48,7 @@ const workerPoolConfig = {
 
 ### Submit Code for Grading
 ```http
-POST /grade
+POST /submit
 Content-Type: application/json
 
 {
@@ -56,13 +56,31 @@ Content-Type: application/json
   "code": "contract MyContract { ... }",
   "language": "solidity",
   "tool": "foundry", // optional, for tool-specific compilation
-  "testCases": [...]
+  "testCases": [...],
+  "metadata": {
+    "gasLimit": 1000000,
+    "timeLimit": 30,
+    "enableTracing": true,
+    "checkPlagiarism": true
+  }
 }
 ```
 
 ### Get Grading Result
 ```http
-GET /grade/:jobId
+GET /submit/:jobId
+```
+
+Response includes queue position and estimated completion time for pending jobs.
+
+### Get Execution Trace
+```http
+GET /submit/:jobId/trace
+```
+
+### Get Queue Status
+```http
+GET /queue/status
 ```
 
 ### Worker Pool Status
@@ -70,7 +88,34 @@ GET /grade/:jobId
 GET /workers/status
 ```
 
-## Worker Implementation
+## Submission Lifecycle
+
+The grading service implements a comprehensive submission pipeline:
+
+1. **Client Submission**: Code + metadata sent to `/submit` endpoint
+2. **Authentication & Rate Limiting**: Session validation and rate limit checks
+3. **Job Creation**: Record created in PostgreSQL, message queued in RabbitMQ
+4. **Worker Assignment**: Orchestrator assigns job to available worker
+5. **Fixture Fetching**: Worker pulls test fixtures from IPFS/S3 (read-only)
+6. **Sandbox Execution**: Code runs in isolated environment with resource limits
+7. **Test Execution**: Visible tests → Hidden tests → Fuzzing/Coverage analysis
+8. **Result Processing**: Gas usage, execution traces, and artifacts collected
+9. **Database Update**: Results stored, leaderboard/XP updated
+10. **Client Notification**: Real-time updates via polling or pub/sub events
+
+### Security Features
+- **Network Isolation**: Workers have no network access
+- **Resource Limits**: CPU, memory, and time constraints enforced
+- **Privilege Dropping**: Workers run with minimal privileges
+- **Sandboxing**: Code execution in isolated containers/VMs
+- **Audit Trails**: Complete execution traces stored for review
+
+### Database Integration
+Jobs are tracked in PostgreSQL with full lifecycle state management:
+- Job status: QUEUED → PROCESSING → COMPLETED/FAILED
+- Result storage: Scores, gas usage, execution traces
+- Leaderboard updates and XP calculations
+- Plagiarism detection and audit logging
 
 Workers are implemented in Rust using:
 - **Warp**: HTTP server framework

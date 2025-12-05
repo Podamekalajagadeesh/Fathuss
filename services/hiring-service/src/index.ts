@@ -272,6 +272,249 @@ app.put('/applications/:id/status', authenticateToken, async (req, res) => {
   }
 });
 
+// Create private challenge room
+app.post('/assessment/rooms', authenticateToken, async (req, res) => {
+  try {
+    const { jobId, candidateId, challenges, timeLimit, proctoringEnabled = false } = req.body;
+    const recruiterId = (req as any).user.id;
+
+    // Generate unique room ID
+    const roomId = `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const assessmentRoom = {
+      id: roomId,
+      jobId,
+      recruiterId,
+      candidateId,
+      challenges,
+      timeLimit, // in minutes
+      proctoringEnabled,
+      status: 'created',
+      startTime: null,
+      endTime: null,
+      createdAt: new Date().toISOString(),
+      accessCode: generateAccessCode()
+    };
+
+    // TODO: Store in database
+    console.log('Assessment room created:', assessmentRoom);
+
+    res.json({
+      success: true,
+      room: assessmentRoom,
+      message: 'Assessment room created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating assessment room:', error);
+    res.status(500).json({ error: 'Failed to create assessment room' });
+  }
+});
+
+// Start assessment session
+app.post('/assessment/rooms/:roomId/start', authenticateToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const userId = (req as any).user.id;
+
+    // TODO: Verify user has access to this room
+    // TODO: Check if room is in correct state
+
+    const startTime = new Date();
+    const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+    const session = {
+      id: sessionId,
+      roomId,
+      userId,
+      startTime: startTime.toISOString(),
+      status: 'active',
+      proctoringEvents: [],
+      submissions: []
+    };
+
+    // TODO: Store session in database
+    // TODO: If proctoring enabled, initialize monitoring
+
+    res.json({
+      success: true,
+      session,
+      message: 'Assessment session started'
+    });
+  } catch (error) {
+    console.error('Error starting assessment session:', error);
+    res.status(500).json({ error: 'Failed to start assessment session' });
+  }
+});
+
+// Submit assessment answer
+app.post('/assessment/rooms/:roomId/submit', authenticateToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const { challengeId, code, language } = req.body;
+    const userId = (req as any).user.id;
+
+    // TODO: Verify session is active and within time limits
+    // TODO: Submit code to grader service
+
+    const submission = {
+      id: `submission_${Date.now()}`,
+      roomId,
+      challengeId,
+      userId,
+      code,
+      language,
+      submittedAt: new Date().toISOString(),
+      status: 'submitted'
+    };
+
+    // TODO: Store submission and trigger grading
+
+    res.json({
+      success: true,
+      submission,
+      message: 'Submission received and queued for grading'
+    });
+  } catch (error) {
+    console.error('Error submitting assessment answer:', error);
+    res.status(500).json({ error: 'Failed to submit assessment answer' });
+  }
+});
+
+// Proctoring event webhook
+app.post('/assessment/proctoring/:sessionId/event', async (req, res) => {
+  try {
+    const { sessionId } = req.params;
+    const { eventType, data, timestamp } = req.body;
+
+    // TODO: Verify webhook signature if proctoring service provides it
+
+    const proctoringEvent = {
+      sessionId,
+      eventType, // 'tab_switch', 'window_blur', 'copy_paste', 'suspicious_activity', etc.
+      data,
+      timestamp: timestamp || new Date().toISOString(),
+      recordedAt: new Date().toISOString()
+    };
+
+    // TODO: Store proctoring event in database
+    // TODO: Analyze event for potential cheating
+    // TODO: Trigger alerts if suspicious activity detected
+
+    console.log('Proctoring event recorded:', proctoringEvent);
+
+    res.json({ success: true, message: 'Event recorded' });
+  } catch (error) {
+    console.error('Error recording proctoring event:', error);
+    res.status(500).json({ error: 'Failed to record proctoring event' });
+  }
+});
+
+// Get assessment results
+app.get('/assessment/rooms/:roomId/results', authenticateToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const userId = (req as any).user.id;
+
+    // TODO: Verify user has access to view results
+    // TODO: Fetch results from database
+
+    const results = {
+      roomId,
+      candidateId: userId,
+      challenges: [
+        {
+          challengeId: 'challenge-1',
+          score: 85,
+          passed: true,
+          timeSpent: 1200, // seconds
+          attempts: 2,
+          feedback: 'Good solution, minor optimization opportunities'
+        },
+        {
+          challengeId: 'challenge-2',
+          score: 92,
+          passed: true,
+          timeSpent: 1800,
+          attempts: 1,
+          feedback: 'Excellent solution with proper error handling'
+        }
+      ],
+      overallScore: 88.5,
+      totalTime: 3000,
+      proctoringFlags: 0,
+      completedAt: new Date().toISOString()
+    };
+
+    res.json(results);
+  } catch (error) {
+    console.error('Error fetching assessment results:', error);
+    res.status(500).json({ error: 'Failed to fetch assessment results' });
+  }
+});
+
+// Get active assessment rooms for recruiter
+app.get('/assessment/rooms', authenticateToken, async (req, res) => {
+  try {
+    const recruiterId = (req as any).user.id;
+    const { status = 'all' } = req.query;
+
+    // TODO: Fetch from database
+    const rooms = [
+      {
+        id: 'room_123',
+        jobId: 'job_456',
+        candidateId: 'candidate_789',
+        status: 'active',
+        timeLimit: 120,
+        challengesCount: 3,
+        startTime: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    res.json({ rooms });
+  } catch (error) {
+    console.error('Error fetching assessment rooms:', error);
+    res.status(500).json({ error: 'Failed to fetch assessment rooms' });
+  }
+});
+
+// End assessment session
+app.post('/assessment/rooms/:roomId/end', authenticateToken, async (req, res) => {
+  try {
+    const { roomId } = req.params;
+    const userId = (req as any).user.id;
+
+    // TODO: Verify user can end this session
+    // TODO: Calculate final results
+    // TODO: Clean up session data
+
+    const endTime = new Date();
+    const sessionSummary = {
+      roomId,
+      endedBy: userId,
+      endTime: endTime.toISOString(),
+      duration: 3600, // seconds
+      finalScore: 88.5,
+      status: 'completed'
+    };
+
+    res.json({
+      success: true,
+      session: sessionSummary,
+      message: 'Assessment session ended successfully'
+    });
+  } catch (error) {
+    console.error('Error ending assessment session:', error);
+    res.status(500).json({ error: 'Failed to end assessment session' });
+  }
+});
+
+// Helper function to generate access code
+function generateAccessCode(): string {
+  return Math.random().toString(36).substr(2, 8).toUpperCase();
+}
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'OK', service: 'hiring-service', timestamp: new Date().toISOString() });

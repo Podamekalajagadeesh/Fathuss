@@ -3,11 +3,22 @@ import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import { ethers } from 'ethers';
+import axios from 'axios';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4004;
+
+// Blockchain configuration
+const PROVIDER_URL = process.env.PROVIDER_URL || 'https://mainnet.infura.io/v3/YOUR_PROJECT_ID';
+const MARKETPLACE_CONTRACT = process.env.MARKETPLACE_CONTRACT || '0x...';
+const PLATFORM_WALLET = process.env.PLATFORM_WALLET || '0x...';
+
+// Revenue split configuration
+const PLATFORM_FEE = 0.05; // 5% platform fee
+const AUTHOR_SPLIT = 0.95; // 95% to author
 
 // Middleware
 app.use(helmet());
@@ -33,6 +44,102 @@ const authenticateToken = (req: express.Request, res: express.Response, next: ex
   (req as any).user = { id: 'user-123', address: '0x...' };
   next();
 };
+
+// Revenue distribution functions
+async function distributeRevenue(challengeId: string, paymentAmount: number, authorAddress: string) {
+  try {
+    const platformFee = paymentAmount * PLATFORM_FEE;
+    const authorShare = paymentAmount * AUTHOR_SPLIT;
+
+    // Record revenue split in database
+    const revenueRecord = {
+      challengeId,
+      totalPayment: paymentAmount,
+      platformFee,
+      authorShare,
+      authorAddress,
+      timestamp: new Date().toISOString(),
+      status: 'pending'
+    };
+
+    // TODO: Store in database
+    console.log('Revenue distribution recorded:', revenueRecord);
+
+    // TODO: Trigger blockchain transaction for distribution
+    // This would involve calling smart contract functions
+
+    return { platformFee, authorShare };
+  } catch (error) {
+    console.error('Error distributing revenue:', error);
+    throw error;
+  }
+}
+
+// Challenge access control
+async function checkChallengeAccess(userId: string, challengeId: string) {
+  // TODO: Check if user has purchased access to this challenge
+  // This would involve checking purchase records in database
+  return true; // Simplified for now
+}
+
+// Purchase challenge access
+async function purchaseChallengeAccess(userId: string, challengeId: string, paymentTx: string) {
+  try {
+    // Verify payment transaction
+    const paymentVerified = await verifyPayment(paymentTx);
+
+    if (!paymentVerified) {
+      throw new Error('Payment verification failed');
+    }
+
+    // Record purchase
+    const purchaseRecord = {
+      userId,
+      challengeId,
+      paymentTx,
+      purchaseDate: new Date().toISOString(),
+      accessGranted: true
+    };
+
+    // TODO: Store in database
+    console.log('Challenge access purchased:', purchaseRecord);
+
+    return purchaseRecord;
+  } catch (error) {
+    console.error('Error purchasing challenge access:', error);
+    throw error;
+  }
+}
+
+// Verify payment transaction
+async function verifyPayment(txHash: string) {
+  try {
+    const provider = new ethers.JsonRpcProvider(PROVIDER_URL);
+
+    // Get transaction details
+    const tx = await provider.getTransaction(txHash);
+
+    if (!tx) {
+      return false;
+    }
+
+    // Verify transaction was sent to marketplace contract
+    if (tx.to?.toLowerCase() !== MARKETPLACE_CONTRACT.toLowerCase()) {
+      return false;
+    }
+
+    // Verify transaction was successful
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (!receipt || receipt.status !== 1) {
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error('Error verifying payment:', error);
+    return false;
+  }
+}
 
 // Get marketplace items
 app.get('/marketplace/items', async (req, res) => {
@@ -223,6 +330,160 @@ app.get('/marketplace/nfts', async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch NFTs' });
   }
 });
+
+// Purchase challenge access
+app.post('/challenges/:challengeId/purchase', authenticateToken, async (req, res) => {
+  try {
+    const { challengeId } = req.params;
+    const { paymentTx } = req.body;
+    const userId = (req as any).user.id;
+
+    // Purchase challenge access
+    const purchase = await purchaseChallengeAccess(userId, challengeId, paymentTx);
+
+    // Get challenge details to distribute revenue
+    const challenge = await getChallengeDetails(challengeId);
+    if (challenge && challenge.price) {
+      await distributeRevenue(challengeId, challenge.price, challenge.authorAddress);
+    }
+
+    res.json({
+      success: true,
+      purchase,
+      message: 'Challenge access purchased successfully'
+    });
+  } catch (error) {
+    console.error('Error purchasing challenge:', error);
+    res.status(500).json({ error: 'Failed to purchase challenge access' });
+  }
+});
+
+// Check challenge access
+app.get('/challenges/:challengeId/access', authenticateToken, async (req, res) => {
+  try {
+    const { challengeId } = req.params;
+    const userId = (req as any).user.id;
+
+    const hasAccess = await checkChallengeAccess(userId, challengeId);
+
+    res.json({
+      challengeId,
+      userId,
+      hasAccess,
+      accessType: hasAccess ? 'purchased' : 'none'
+    });
+  } catch (error) {
+    console.error('Error checking challenge access:', error);
+    res.status(500).json({ error: 'Failed to check challenge access' });
+  }
+});
+
+// Get revenue analytics for authors
+app.get('/revenue/analytics', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).user.id;
+    const { period = 'month' } = req.query;
+
+    // TODO: Fetch from database
+    const analytics = {
+      totalEarnings: 2.5,
+      platformFees: 0.125,
+      authorShare: 2.375,
+      challengesSold: 15,
+      averagePrice: 0.167,
+      topChallenges: [
+        { id: 'challenge-1', title: 'DeFi Security', earnings: 0.8 },
+        { id: 'challenge-2', title: 'Smart Contract Audit', earnings: 0.6 }
+      ],
+      period
+    };
+
+    res.json(analytics);
+  } catch (error) {
+    console.error('Error fetching revenue analytics:', error);
+    res.status(500).json({ error: 'Failed to fetch revenue analytics' });
+  }
+});
+
+// Get author's challenges with sales data
+app.get('/author/challenges', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).user.id;
+
+    // TODO: Fetch from database
+    const challenges = [
+      {
+        id: 'challenge-1',
+        title: 'DeFi Security Challenge',
+        description: 'Advanced DeFi security testing',
+        price: 0.2,
+        currency: 'ETH',
+        sales: 8,
+        revenue: 1.6,
+        rating: 4.8,
+        status: 'active',
+        createdAt: '2024-01-15T00:00:00Z'
+      },
+      {
+        id: 'challenge-2',
+        title: 'Smart Contract Audit Prep',
+        description: 'Prepare for smart contract audits',
+        price: 0.15,
+        currency: 'ETH',
+        sales: 7,
+        revenue: 1.05,
+        rating: 4.9,
+        status: 'active',
+        createdAt: '2024-02-01T00:00:00Z'
+      }
+    ];
+
+    res.json({ challenges });
+  } catch (error) {
+    console.error('Error fetching author challenges:', error);
+    res.status(500).json({ error: 'Failed to fetch author challenges' });
+  }
+});
+
+// Withdraw earnings
+app.post('/revenue/withdraw', authenticateToken, async (req, res) => {
+  try {
+    const userId = (req as any).user.id;
+    const { amount, currency = 'ETH', destinationAddress } = req.body;
+
+    // TODO: Process withdrawal through smart contract
+    const withdrawal = {
+      id: 'withdrawal_' + Date.now(),
+      userId,
+      amount,
+      currency,
+      destinationAddress,
+      status: 'pending',
+      createdAt: new Date().toISOString()
+    };
+
+    // TODO: Store in database and trigger blockchain transaction
+
+    res.json({
+      success: true,
+      withdrawal,
+      message: 'Withdrawal request submitted successfully'
+    });
+  } catch (error) {
+    console.error('Error processing withdrawal:', error);
+    res.status(500).json({ error: 'Failed to process withdrawal' });
+  }
+});
+
+// Helper function to get challenge details
+async function getChallengeDetails(challengeId: string) {
+  // TODO: Fetch from database or challenge service
+  return {
+    id: challengeId,
+    price: 0.2,
+    authorAddress: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e'
+  };
+}
 
 // Health check
 app.get('/health', (req, res) => {

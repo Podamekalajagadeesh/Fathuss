@@ -22,13 +22,23 @@ helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 
 # Install or upgrade Fathuss
-echo "⚙️ Installing/upgrading Fathuss..."
+echo "⚙️ Installing/upgrading Fathuss with security features..."
 if helm status "$RELEASE_NAME" -n "$NAMESPACE" >/dev/null 2>&1; then
     echo "Upgrading existing release..."
-    helm upgrade "$RELEASE_NAME" "$CHART_PATH" -n "$NAMESPACE" "$@"
+    helm upgrade "$RELEASE_NAME" "$CHART_PATH" -n "$NAMESPACE" \
+        --set podSecurityStandards.enabled=true \
+        --set networkPolicy.enabled=true \
+        --set securityProfiles.enabled=true \
+        --set namespaces.create=true \
+        "$@"
 else
-    echo "Installing new release..."
-    helm install "$RELEASE_NAME" "$CHART_PATH" -n "$NAMESPACE" "$@"
+    echo "Installing new release with security features..."
+    helm install "$RELEASE_NAME" "$CHART_PATH" -n "$NAMESPACE" \
+        --set podSecurityStandards.enabled=true \
+        --set networkPolicy.enabled=true \
+        --set securityProfiles.enabled=true \
+        --set namespaces.create=true \
+        "$@"
 fi
 
 # Wait for deployments to be ready

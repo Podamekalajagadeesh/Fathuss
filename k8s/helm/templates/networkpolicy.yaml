@@ -46,10 +46,109 @@ spec:
           port: 53
         - protocol: UDP
           port: 53
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: clickhouse
+      ports:
+        - protocol: TCP
+          port: 8123
+        - protocol: TCP
+          port: 9000
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ipfs
+      ports:
+        - protocol: TCP
+          port: 5001
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    # Allow HTTPS outbound for external API calls (curated fixtures)
     - to: []
       ports:
         - protocol: TCP
           port: 443
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "fathuss.fullname" . }}-grader-isolation
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "fathuss.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: grader-orchestration
+  policyTypes:
+    - Egress
+  egress:
+    # Allow internal communication
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "fathuss.selectorLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+    # Allow database access
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # Allow Redis access
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - protocol: TCP
+          port: 6379
+    # Allow RabbitMQ access
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rabbitmq
+      ports:
+        - protocol: TCP
+          port: 5672
+    # Allow DNS resolution
+    - to: []
+      ports:
+        - protocol: TCP
+          port: 53
+        - protocol: UDP
+          port: 53
+    # NO general internet access - only curated fixtures via controlled proxy
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

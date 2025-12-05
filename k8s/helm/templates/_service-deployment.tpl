@@ -23,7 +23,30 @@ spec:
       labels:
         {{- include "fathuss.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: {{ $serviceName }}
+      annotations:
+        {{- if $serviceValues.securityContext }}
+        seccomp.security.alpha.kubernetes.io/pod: {{ $serviceValues.securityContext.seccompProfile | default "runtime/default" }}
+        {{- if $serviceValues.securityContext.appArmorProfile }}
+        container.apparmor.security.beta.kubernetes.io/{{ $serviceName }}: {{ $serviceValues.securityContext.appArmorProfile }}
+        {{- end }}
+        {{- end }}
     spec:
+      {{- if $serviceValues.securityContext }}
+      securityContext:
+        runAsUser: {{ $serviceValues.securityContext.runAsUser | default 1000 }}
+        runAsGroup: {{ $serviceValues.securityContext.runAsGroup | default 1000 }}
+        fsGroup: {{ $serviceValues.securityContext.fsGroup | default 1000 }}
+        runAsNonRoot: {{ $serviceValues.securityContext.runAsNonRoot | default true }}
+      {{- end }}
+      volumes:
+        {{- if $serviceValues.securityContext }}
+        - name: seccomp-profile
+          configMap:
+            name: {{ include "fathuss.fullname" $ }}-seccomp-profiles
+            items:
+            - key: grader-seccomp.json
+              path: grader-seccomp.json
+        {{- end }}
       containers:
         - name: {{ $serviceName }}
           image: {{ $serviceValues.image.repository }}:{{ $serviceValues.image.tag | default $.Chart.AppVersion }}
@@ -42,8 +65,26 @@ spec:
                 {{- .valueFrom | toYaml | nindent 16 }}
               {{- end }}
             {{- end }}
-          resources:
-            {{- toYaml $serviceValues.resources | nindent 12 }}
+          volumeMounts:
+            {{- if $serviceValues.securityContext }}
+            - name: seccomp-profile
+              mountPath: /var/lib/kubelet/seccomp
+              readOnly: true
+            {{- end }}
+          {{- if $serviceValues.securityContext }}
+          securityContext:
+            allowPrivilegeEscalation: {{ $serviceValues.securityContext.allowPrivilegeEscalation | default false }}
+            readOnlyRootFilesystem: {{ $serviceValues.securityContext.readOnlyRootFilesystem | default true }}
+            runAsNonRoot: {{ $serviceValues.securityContext.runAsNonRoot | default true }}
+            runAsUser: {{ $serviceValues.securityContext.runAsUser | default 1000 }}
+            capabilities:
+              drop:
+                - ALL
+              {{- if $serviceValues.securityContext.capabilities }}
+              add:
+                {{- $serviceValues.securityContext.capabilities | toYaml | nindent 16 }}
+              {{- end }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: /health

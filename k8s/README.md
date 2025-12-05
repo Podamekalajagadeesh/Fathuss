@@ -40,14 +40,68 @@ Kubernetes Cluster
     └── Sentry (Error Tracking)
 ```
 
-## Prerequisites
+## Security Architecture
 
-- Kubernetes cluster (v1.19+)
-- Helm 3.x
-- kubectl configured
-- Ingress controller (nginx recommended)
-- Cert-manager (for TLS certificates)
-- Storage class for persistent volumes
+The Fathuss platform implements multiple layers of security to protect against threats, especially important given the execution of untrusted user code.
+
+### Isolation Layers
+
+1. **Kubernetes Namespaces per Environment**
+   - `fathuss-dev`: Development environment
+   - `fathuss-staging`: Staging environment  
+   - `fathuss-prod`: Production environment
+   - Each namespace has dedicated node pools and resource quotas
+
+2. **Pod Security Policies (PSP)**
+   - **Restricted PSP**: Applied to all services except grader
+     - Non-root execution
+     - Dropped capabilities
+     - Read-only root filesystem
+   - **Grader PSP**: Specialized for code execution
+     - Allows Docker socket access for container management
+     - Limited write permissions for trace storage
+     - NET_BIND_SERVICE capability for privileged ports
+
+3. **Container Security Contexts**
+   - All containers run as non-root users (UID 1000)
+   - Privilege escalation disabled
+   - Capabilities dropped (ALL)
+   - Read-only root filesystem (except grader for traces)
+
+4. **Network Policies**
+   - **Internal Traffic**: Services can communicate within the namespace
+   - **Database Access**: Restricted to specific services
+   - **External Access**: Blocked by default, only curated fixtures allowed
+   - **Grader Isolation**: Most restrictive egress policy for untrusted code execution
+
+5. **Seccomp & AppArmor Profiles**
+   - **Seccomp**: Restrictive syscall whitelist for grader containers
+   - **AppArmor**: File system and network access controls
+   - Custom profiles loaded via ConfigMaps
+
+6. **Untrusted Execution Isolation**
+   - **Firecracker**: MicroVMs for code execution (enabled in grader-orchestration)
+   - **gVisor**: Alternative sandboxing runtime (configurable)
+   - **Resource Limits**: CPU, memory, and time restrictions
+   - **Network Isolation**: No internet access, controlled fixture downloads
+
+### Security Configuration
+
+```bash
+# Enable security features
+helm upgrade fathuss ./helm \
+  --set podSecurityStandards.enabled=true \
+  --set networkPolicy.enabled=true \
+  --set securityProfiles.enabled=true \
+  --set namespaces.create=true
+```
+
+### Monitoring & Compliance
+
+- **Runtime Security**: Falco for container runtime monitoring
+- **Vulnerability Scanning**: Trivy for container image scanning
+- **Audit Logging**: All security events logged to Loki
+- **Compliance**: CIS Kubernetes benchmarks implemented
 
 ## Quick Start
 

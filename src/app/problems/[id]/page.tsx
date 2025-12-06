@@ -2,20 +2,25 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { ArrowLeftIcon, PlayIcon, PaperAirplaneIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import MonacoEditor from '@/components/MonacoEditor'
-import { fetchChallenge } from '@/lib/api'
+import { fetchChallenge, submitChallenge } from '@/lib/api'
 
 interface ProblemPageProps {
   params: Promise<{ id: string }>
 }
 
 export default function ProblemDetails({ params }: ProblemPageProps) {
+  const router = useRouter()
   const [code, setCode] = useState(`// Write your solution here`)
   const [language, setLanguage] = useState('javascript')
   const [theme, setTheme] = useState('vs-dark')
+  const [activeTab, setActiveTab] = useState('description')
   const [activeConsoleTab, setActiveConsoleTab] = useState('output')
   const [inputData, setInputData] = useState('')
+  const [output, setOutput] = useState('')
+  const [isRunning, setIsRunning] = useState(false)
   const [problem, setProblem] = useState(null)
   const [loading, setLoading] = useState(true)
   const [id, setId] = useState<string>('')
@@ -93,8 +98,14 @@ Memory used: 8.2MB`)
   }
 
   const handleSubmitCode = async () => {
-    // Mock submission - just show alert
-    alert('Code submitted successfully! (Mock submission - backend in Phase 2)')
+    try {
+      const result = await submitChallenge(id, code)
+      // Assuming result has submissionId or something
+      router.push(`/problems/${id}/results?submission=${result.submissionId}`)
+    } catch (error) {
+      console.error('Submission failed:', error)
+      alert('Submission failed. Please try again.')
+    }
   }
 
   return (

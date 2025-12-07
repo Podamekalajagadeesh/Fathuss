@@ -53,43 +53,71 @@ Fathuss is a distributed platform with three main user-facing surfaces and sever
 
 ### Component Diagram
 
-```
-Component diagram (textual)[Browser/Client]
-  ├─ Next.js (Monaco IDE + UI)
-    ├─ Wallet (MetaMask/WalletConnect) => SIWE
-      └─ GraphQL/REST -> API Gateway
-
-      [API Gateway / Auth]
-        └─ Node.js / TypeScript (Next.js API or standalone)
-
-        [Services]
-          ├─ User Service (TS)
-            ├─ Challenge Service (TS)
-              ├─ Leaderboard Service (TS)
-                ├─ Marketplace Service (TS)
-                  ├─ Hiring Service (TS)
-                    └─ Grader Orchestration (Rust/Go controller + TS orchestration)
-
-                    [Message Bus]
-                      └─ Kafka/RabbitMQ
-
-                      [Worker Pool]
-                        ├─ Grader Workers (Rust) -> docker / Firecracker
-                          └─ Compiler Workers (Foundry/Anvil, Hardhat, cargo, move-cli)
-
-                          [Storage]
-                            ├─ Postgres (metadata)
-                              ├─ Redis (sessions, rate limits)
-                                ├─ ClickHouse (analytics)
-                                  └─ IPFS (fixtures, testcases, challenge binaries)
-
-                                  [Orchestration]
-                                    └─ Kubernetes + Helm
-
-                                    [Observability]
-                                      ├─ Prometheus / Grafana
-                                        ├─ Loki / ELK
-                                          └─ Sentry
+```mermaid
+graph TD
+    subgraph Client["Browser/Client"]
+        A[Next.js Monaco IDE + UI]
+        subgraph Wallet
+            B[MetaMask/WalletConnect]
+            C[SIWE]
+        end
+        A --> B
+        B --> C
+    end
+    C --> D[GraphQL/REST -> API Gateway]
+    subgraph API["API Gateway / Auth"]
+        E[Node.js / TypeScript]
+    end
+    D --> E
+    subgraph Services
+        F[User Service TS]
+        G[Challenge Service TS]
+        H[Leaderboard Service TS]
+        I[Marketplace Service TS]
+        J[Hiring Service TS]
+        K[Grader Orchestration Rust/Go + TS]
+    end
+    E --> F
+    F --> G
+    G --> H
+    H --> I
+    I --> J
+    J --> K
+    subgraph MessageBus["Message Bus"]
+        L[Kafka/RabbitMQ]
+    end
+    K --> L
+    subgraph WorkerPool["Worker Pool"]
+        M[Grader Workers Rust]
+        N[Compiler Workers]
+        M --> O[docker / Firecracker]
+        N --> P[Foundry/Anvil, Hardhat, cargo, move-cli]
+    end
+    L --> M
+    L --> N
+    subgraph Storage
+        Q[Postgres metadata]
+        R[Redis sessions, rate limits]
+        S[ClickHouse analytics]
+        T[IPFS fixtures, testcases, challenge binaries]
+    end
+    O --> Q
+    P --> Q
+    Q --> R
+    R --> S
+    S --> T
+    subgraph Orchestration
+        U[Kubernetes + Helm]
+    end
+    T --> U
+    subgraph Observability
+        V[Prometheus / Grafana]
+        W[Loki / ELK]
+        X[Sentry]
+    end
+    U --> V
+    V --> W
+    W --> X
 ```
 
 ### Security & Resource Enforcement

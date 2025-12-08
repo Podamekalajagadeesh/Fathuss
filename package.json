@@ -2,6 +2,11 @@
   "name": "fathuss",
   "version": "0.1.0",
   "private": true,
+  "workspaces": [
+    "api-gateway",
+    "audit-service",
+    "services/*"
+  ],
   "scripts": {
     "dev": "next dev",
     "build": "next build",

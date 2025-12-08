@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import multer from 'multer';
 import { createClient as createClickHouseClient } from '@clickhouse/client';
 import { createClient as createRedisClient } from 'redis';
-// import { create as createIPFSClient } from 'ipfs-http-client';
+import { create as createIPFSClient } from 'ipfs-http-client';
 import { createReadStream } from 'fs';
 import { Client as PostgresClient } from 'pg';
 import { AnomalyDetector } from './anomaly-detector';
@@ -36,11 +36,11 @@ const postgresClient = new PostgresClient({
 postgresClient.connect().catch(console.error);
 
 // IPFS client
-// const ipfs = createIPFSClient({
-//   host: process.env.IPFS_HOST || 'localhost',
-//   port: parseInt(process.env.IPFS_PORT || '5001'),
-//   protocol: 'http'
-// });
+const ipfs = createIPFSClient({
+  host: process.env.IPFS_HOST || 'localhost',
+  port: parseInt(process.env.IPFS_PORT || '5001'),
+  protocol: 'http'
+});
 
 // Multer configuration for file uploads
 const upload = multer({
@@ -85,13 +85,12 @@ app.post('/files/upload', authenticateToken, upload.single('file'), async (req: 
     const fileType = req.body.fileType || 'misc'; // testcase, fixture, binary, etc.
 
     // Add file to IPFS
-    // const result = await ipfs.add({
-    //   path: originalname,
-    //   content: buffer
-    // });
+    const result = await ipfs.add({
+      path: originalname,
+      content: buffer
+    });
 
-    // const ipfsHash = result.cid.toString();
-    const ipfsHash = `mock-hash-${Date.now()}`; // Mock for testing
+    const ipfsHash = result.cid.toString();
 
     // Store metadata in Postgres
     await postgresClient.query(
@@ -166,12 +165,13 @@ app.get('/files/:hash/download', async (req: Request, res: Response) => {
     const file = metadata.rows[0];
 
     // Stream file from IPFS
-    // const stream = ipfs.cat(hash);
-
-    // Mock file download for testing
     res.setHeader('Content-Type', file.mime_type);
     res.setHeader('Content-Disposition', `attachment; filename="${file.filename}"`);
-    res.send('Mock file content for testing anomaly detection');
+
+    for await (const chunk of ipfs.cat(hash)) {
+      res.write(chunk);
+    }
+    res.end();
 
     // Log download analytics
     await clickhouse.insert({

@@ -570,6 +570,19 @@ app.use('/graphql', authenticateToken, graphqlHTTP({
 }));
 
 // User service routes
+app.get('/users/me', authenticateToken, async (req, res) => {
+  try {
+    const userAddress = (req as any).user.address;
+    const response = await fetch(`http://localhost:4001/users/${userAddress}`, {
+      headers: { 'Authorization': req.headers.authorization! }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: 'User service unavailable' });
+  }
+});
+
 app.get('/users/:address', authenticateToken, async (req, res) => {
   try {
     const response = await fetch(`http://localhost:4001/users/${req.params.address}`, {
@@ -805,6 +818,20 @@ app.get('/api/challenges/:slug', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Error fetching challenge:', error);
     res.status(500).json({ error: 'Failed to fetch challenge' });
+  }
+});
+
+// GET /challenges/users/:address/solved — user's solved challenges
+app.get('/challenges/users/:address/solved', authenticateToken, async (req, res) => {
+  try {
+    const response = await fetch(`http://localhost:4002/users/${req.params.address}/solved?${new URLSearchParams(req.query as any)}`, {
+      headers: { 'Authorization': req.headers.authorization! }
+    });
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    console.error('Error fetching solved challenges:', error);
+    res.status(500).json({ error: 'Failed to fetch solved challenges' });
   }
 });
 

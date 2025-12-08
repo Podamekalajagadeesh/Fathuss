@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, ClockIcon, ArrowRightIcon, CodeBracketIcon, StarIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import Logo from '../../components/Logo'
-import { fetchLeaderboard } from '@/lib/api'
+import { fetchLeaderboard, fetchSolvedChallenges, fetchCurrentUser } from '@/lib/api'
 
 export default function Dashboard() {
   const [recentlySolved, setRecentlySolved] = useState<{ id: number; title: string; difficulty: string; solvedAt: string }[]>([])
@@ -14,13 +14,19 @@ export default function Dashboard() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        // TODO: Fetch recently solved problems for the user
-        // For now, using placeholder
-        setRecentlySolved([
-          { id: 1, title: 'Two Sum', difficulty: 'Easy', solvedAt: '2 hours ago' },
-          { id: 2, title: 'Valid Parentheses', difficulty: 'Easy', solvedAt: '1 day ago' },
-          { id: 3, title: 'Merge Two Sorted Lists', difficulty: 'Easy', solvedAt: '2 days ago' },
-        ])
+        // Fetch current user
+        const currentUser = await fetchCurrentUser()
+
+        // Fetch recently solved problems for the user
+        const solvedData = await fetchSolvedChallenges(currentUser.address)
+        const recentlySolved = solvedData.solvedChallenges.slice(0, 5).map((challenge: any) => ({
+          id: challenge.id,
+          title: challenge.title,
+          difficulty: challenge.difficulty,
+          solvedAt: new Date(challenge.solvedAt).toLocaleDateString()
+        }))
+
+        setRecentlySolved(recentlySolved)
 
         const leaderboardData = await fetchLeaderboard()
         // Assuming leaderboardData is an array with rank, name, score, etc.
@@ -29,7 +35,7 @@ export default function Dashboard() {
           name: user.username || user.address.substring(0, 6) + '...',
           score: user.totalPoints,
           avatar: user.username ? user.username.charAt(0).toUpperCase() : 'U',
-          isCurrentUser: false // TODO: Check if current user
+          isCurrentUser: user.address.toLowerCase() === currentUser.address.toLowerCase()
         })))
       } catch (error) {
         console.error('Failed to fetch data:', error)
@@ -73,6 +79,9 @@ export default function Dashboard() {
               </Link>
               <Link href="/leaderboard" className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400">
                 Leaderboard
+              </Link>
+              <Link href="/about" className="text-gray-700 dark:text-gray-300 hover:text-indigo-600 dark:hover:text-indigo-400">
+                About
               </Link>
             </nav>
           </div>

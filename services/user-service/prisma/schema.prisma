@@ -47,6 +47,9 @@ model User {
   // Job applications
   jobApplications       JobApplication[]
 
+  // Reputation audit log
+  reputationAudits      ReputationAudit[]
+
   @@map("users")
 }
 
@@ -160,4 +163,16 @@ model JobApplication {
   updatedAt     DateTime @updatedAt
 
   @@map("job_applications")
+}
+
+model ReputationAudit {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  change      Int
+  newTotal    Int
+  reason      String
+  createdAt   DateTime @default(now())
+
+  @@map("reputation_audit")
 }

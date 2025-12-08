@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { MagnifyingGlassIcon, AdjustmentsHorizontalIcon, ChevronLeftIcon, ChevronRightIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
-import { fetchChallenges } from '@/lib/api'
+import { fetchChallenges, fetchSolvedChallengeIds, fetchCurrentUser } from '@/lib/api'
 
 export default function Problems() {
   const [searchTerm, setSearchTerm] = useState('')
@@ -16,10 +16,21 @@ export default function Problems() {
   useEffect(() => {
     const loadProblems = async () => {
       try {
-        const data = await fetchChallenges()
-        // Assuming data is an array of challenges with id, title, difficulty, topic, etc.
-        // Add solved status if available, else default to false
-        const problemsWithSolved = data.map(problem => ({ ...problem, solved: false })) // TODO: Fetch user solved status
+        const [challengesData, currentUser] = await Promise.all([
+          fetchChallenges(),
+          fetchCurrentUser().catch(() => null) // Handle case where user is not logged in
+        ])
+
+        let solvedIds: string[] = []
+        if (currentUser) {
+          solvedIds = await fetchSolvedChallengeIds(currentUser.address)
+        }
+
+        // Mark solved challenges
+        const problemsWithSolved = challengesData.map((problem: any) => ({
+          ...problem,
+          solved: solvedIds.includes(problem.id)
+        }))
         setProblems(problemsWithSolved)
       } catch (error) {
         console.error('Failed to fetch problems:', error)

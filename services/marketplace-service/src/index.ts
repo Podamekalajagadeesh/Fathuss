@@ -5,11 +5,13 @@ import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
 import { ethers } from 'ethers';
 import axios from 'axios';
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4004;
+const prisma = new PrismaClient();
 
 // Blockchain configuration
 const PROVIDER_URL = process.env.PROVIDER_URL || 'https://mainnet.infura.io/v3/YOUR_PROJECT_ID';
@@ -51,24 +53,22 @@ async function distributeRevenue(challengeId: string, paymentAmount: number, aut
     const platformFee = paymentAmount * PLATFORM_FEE;
     const authorShare = paymentAmount * AUTHOR_SPLIT;
 
-    // Record revenue split in database
-    const revenueRecord = {
-      challengeId,
-      totalPayment: paymentAmount,
-      platformFee,
-      authorShare,
-      authorAddress,
-      timestamp: new Date().toISOString(),
-      status: 'pending'
-    };
-
-    // TODO: Store in database
-    console.log('Revenue distribution recorded:', revenueRecord);
+    // Store in database
+    const revenueRecord = await prisma.revenueDistribution.create({
+      data: {
+        challengeId,
+        totalPayment: paymentAmount,
+        platformFee,
+        authorShare,
+        authorAddress,
+        status: 'pending'
+      }
+    });
 
     // TODO: Trigger blockchain transaction for distribution
-    // This would involve calling smart contract functions
+    // This would involve calling smart contract functions to transfer funds
 
-    return { platformFee, authorShare };
+    return { platformFee, authorShare, recordId: revenueRecord.id };
   } catch (error) {
     console.error('Error distributing revenue:', error);
     throw error;
@@ -493,3 +493,18 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Marketplace Service running on port ${PORT}`);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down gracefully');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+export default app;

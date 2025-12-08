@@ -108,6 +108,36 @@ Memory used: 8.2MB`)
     }
   }
 
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+      </main>
+    )
+  }
+
+  if (!problem) {
+    return (
+      <main className="min-h-screen bg-gray-50 dark:bg-gray-900 flex items-center justify-center px-4">
+        <div className="max-w-md w-full text-center">
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-4">
+            Problem Not Found
+          </h1>
+          <p className="text-gray-600 dark:text-gray-400 mb-8">
+            The challenge you're looking for doesn't exist.
+          </p>
+          <Link
+            href="/problems"
+            className="bg-gradient-to-r from-blue-500 to-cyan-600 hover:from-blue-600 hover:to-cyan-700 text-white px-6 py-3 rounded-lg font-semibold inline-flex items-center transition-all"
+          >
+            <ArrowLeftIcon className="ml-2 h-5 w-5 rotate-180 mr-2" />
+            Back to Problems
+          </Link>
+        </div>
+      </main>
+    )
+  }
+
   return (
     <main className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}

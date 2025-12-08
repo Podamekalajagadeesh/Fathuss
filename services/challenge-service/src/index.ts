@@ -6,6 +6,7 @@ import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
+import { create as createIPFSClient } from 'ipfs-http-client';
 
 dotenv.config();
 
@@ -13,8 +14,12 @@ const app = express();
 const PORT = process.env.PORT || 4002;
 const prisma = new PrismaClient();
 
-// IPFS configuration
-const IPFS_API_URL = process.env.IPFS_API_URL || 'http://localhost:5001/api/v0';
+// IPFS client
+const ipfs = createIPFSClient({
+  host: process.env.IPFS_HOST || 'localhost',
+  port: parseInt(process.env.IPFS_PORT || '5001'),
+  protocol: 'http'
+});
 
 // Middleware
 app.use(helmet());
@@ -719,10 +724,11 @@ app.post('/fixtures/upload', authenticateToken, requireAuthor, async (req, res) 
   try {
     const { file, name, type, description } = req.body;
 
-    // TODO: Upload to IPFS
-    // For now, simulate IPFS upload
-    const ipfsHash = `Qm${Math.random().toString(36).substr(2, 9)}`;
-    const fileSize = file ? Buffer.byteLength(file, 'base64') : 0;
+    // Upload to IPFS
+    const buffer = Buffer.from(file, 'base64');
+    const result = await ipfs.add(buffer);
+    const ipfsHash = result.cid.toString();
+    const fileSize = buffer.length;
 
     res.json({
       ipfsHash,
@@ -742,15 +748,12 @@ app.get('/fixtures/:hash', async (req, res) => {
   try {
     const { hash } = req.params;
 
-    // Download from IPFS gateway
-    const ipfsGatewayUrl = `https://ipfs.io/ipfs/${hash}`;
-    const response = await fetch(ipfsGatewayUrl);
-
-    if (!response.ok) {
-      throw new Error(`IPFS gateway returned ${response.status}`);
+    // Download from IPFS
+    const chunks = [];
+    for await (const chunk of ipfs.cat(hash)) {
+      chunks.push(chunk);
     }
-
-    const content = await response.text();
+    const content = Buffer.concat(chunks).toString();
 
     res.json({
       hash,
@@ -762,14 +765,90 @@ app.get('/fixtures/:hash', async (req, res) => {
   }
 });
 
+// Get solved challenges for user
+app.get('/users/:address/solved', authenticateToken, async (req, res) => {
+  try {
+    const { address } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    // Get all submissions with successful scores
+    const solvedSubmissions = await prisma.submission.findMany({
+      where: {
+        userId: address.toLowerCase(),
+        status: 'completed',
+        score: {
+          gt: 0
+        }
+      },
+      include: {
+        challenge: {
+          select: {
+            id: true,
+            title: true,
+            difficulty: true,
+            points: true
+          }
+        }
+      },
+      orderBy: { completedAt: 'desc' },
+      skip: (Number(page) - 1) * Number(limit),
+      take: Number(limit)
+    });
+
+    // Group by challenge to avoid duplicates (take the best score)
+    const solvedChallenges = solvedSubmissions.reduce((acc, sub) => {
+      const existing = acc.find(c => c.challenge.id === sub.challenge.id);
+      if (!existing || (sub.score || 0) > (existing.bestScore || 0)) {
+        acc.push({
+          id: sub.challenge.id,
+          title: sub.challenge.title,
+          difficulty: sub.challenge.difficulty,
+          points: sub.challenge.points,
+          solvedAt: sub.completedAt,
+          bestScore: sub.score,
+          language: sub.language
+        });
+      }
+      return acc;
+    }, [] as any[]);
+
+    const total = solvedChallenges.length;
+
+    res.json({
+      solvedChallenges: solvedChallenges.slice((Number(page) - 1) * Number(limit), Number(page) * Number(limit)),
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching solved challenges:', error);
+    res.status(500).json({ error: 'Failed to fetch solved challenges' });
+  }
+});
+
 // Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    service: 'challenge-service',
-    timestamp: new Date().toISOString(),
-    database: 'connected' // TODO: Add actual DB health check
-  });
+app.get('/health', async (req, res) => {
+  try {
+    // Check database connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'OK',
+      service: 'challenge-service',
+      timestamp: new Date().toISOString(),
+      database: 'connected'
+    });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+    res.status(503).json({
+      status: 'ERROR',
+      service: 'challenge-service',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected'
+    });
+  }
 });
 
 app.listen(PORT, () => {

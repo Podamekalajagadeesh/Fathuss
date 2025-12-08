@@ -55,3 +55,18 @@ export const submitChallenge = async (challengeId: string, code: string) => {
   const response = await apiClient.post('/submit', { challengeId, code })
   return response.data
 }
+
+export const fetchSolvedChallenges = async (address: string): Promise<{ solvedChallenges: any[]; pagination: any }> => {
+  const response = await apiClient.get(`/challenges/users/${address}/solved`)
+  return response.data
+}
+
+export const fetchCurrentUser = async (): Promise<{ address: string; username?: string; totalPoints: number }> => {
+  const response = await apiClient.get('/users/me')
+  return response.data
+}
+
+export const fetchSolvedChallengeIds = async (address: string): Promise<string[]> => {
+  const response = await apiClient.get(`/challenges/users/${address}/solved?limit=1000`)
+  return response.data.solvedChallenges.map((c: any) => c.id)
+}

@@ -1,0 +1,54 @@
+// Prisma schema for Admin Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model ChallengeReview {
+  id          String   @id @default(uuid())
+  challengeId String
+  adminId     String
+  action      String   // approve, reject
+  feedback    String?
+  reason      String?
+  reviewedAt  DateTime @default(now())
+
+  @@map("challenge_reviews")
+}
+
+model IPFSPin {
+  id        String   @id @default(uuid())
+  hash      String   @unique
+  pinnedAt  DateTime @default(now())
+  pinnedBy  String
+
+  @@map("ipfs_pins")
+}
+
+model UserReport {
+  id          String   @id @default(uuid())
+  reporterId  String
+  reportedId  String
+  reason      String
+  description String?
+  status      String   @default("pending") // pending, reviewed, resolved
+  createdAt   DateTime @default(now())
+  reviewedAt  DateTime?
+
+  @@map("user_reports")
+}
+
+model ModerationAction {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String   // warn, suspend, ban
+  reason    String
+  duration  Int?     // days
+  executedAt DateTime @default(now())
+
+  @@map("moderation_actions")
+}

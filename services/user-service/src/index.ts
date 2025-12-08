@@ -485,7 +485,15 @@ app.post('/users/:address/reputation', authenticateToken, async (req, res) => {
       }
     });
 
-    // TODO: Log reputation change in audit table
+    // Log reputation change in audit table
+    await prisma.reputationAudit.create({
+      data: {
+        userId: updatedUser.id,
+        change,
+        newTotal: updatedUser.reputation,
+        reason
+      }
+    });
 
     res.json({
       reputation: updatedUser.reputation,
@@ -756,13 +764,25 @@ app.put('/admin/users/:userId/role', async (req, res) => {
 });
 
 // Health check
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'OK',
-    service: 'user-service',
-    timestamp: new Date().toISOString(),
-    database: 'connected' // TODO: Add actual DB health check
-  });
+app.get('/health', async (req, res) => {
+  try {
+    // Check database connection
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({
+      status: 'OK',
+      service: 'user-service',
+      timestamp: new Date().toISOString(),
+      database: 'connected'
+    });
+  } catch (error) {
+    console.error('Database health check failed:', error);
+    res.status(503).json({
+      status: 'ERROR',
+      service: 'user-service',
+      timestamp: new Date().toISOString(),
+      database: 'disconnected'
+    });
+  }
 });
 
 app.listen(PORT, () => {

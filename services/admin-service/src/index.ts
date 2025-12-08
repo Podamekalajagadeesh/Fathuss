@@ -6,16 +6,23 @@ import dotenv from 'dotenv';
 import axios from 'axios';
 import { create as createIPFS } from 'ipfs-http-client';
 import { ethers } from 'ethers';
+import { PrismaClient } from '@prisma/client';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 4007;
+const prisma = new PrismaClient();
 
 // IPFS configuration
 const IPFS_URL = process.env.IPFS_URL || 'https://ipfs.infura.io:5001';
 const IPFS_PROJECT_ID = process.env.IPFS_PROJECT_ID;
 const IPFS_PROJECT_SECRET = process.env.IPFS_PROJECT_SECRET;
+
+// Smart contract configuration
+const PROVIDER_URL = process.env.PROVIDER_URL || 'https://mainnet.infura.io/v3/YOUR_PROJECT_ID';
+const CHALLENGE_CONTRACT_ADDRESS = process.env.CHALLENGE_CONTRACT_ADDRESS || '0x...';
+const ADMIN_PRIVATE_KEY = process.env.ADMIN_PRIVATE_KEY;
 
 // Admin configuration
 const ADMIN_ADDRESSES = (process.env.ADMIN_ADDRESSES || '').split(',');
@@ -67,12 +74,70 @@ try {
   console.error('Failed to initialize IPFS client:', error);
 }
 
+// Initialize blockchain provider and signer
+let provider: ethers.Provider;
+let signer: ethers.Signer;
+
+async function initBlockchain() {
+  if (!provider) {
+    provider = new ethers.JsonRpcProvider(PROVIDER_URL);
+    if (ADMIN_PRIVATE_KEY) {
+      const wallet = new ethers.Wallet(ADMIN_PRIVATE_KEY, provider);
+      signer = wallet;
+    }
+  }
+}
+
+// Challenge contract ABI (simplified)
+const CHALLENGE_CONTRACT_ABI = [
+  "function addChallenge(string memory ipfsHash, address author) external",
+  "function updateChallengeStatus(uint256 challengeId, uint8 status) external"
+];
+
+// Function to pin challenge to IPFS and update smart contract
+async function approveAndDeployChallenge(challengeId: string, challengeData: any) {
+  try {
+    // Pin challenge data to IPFS
+    const challengeContent = JSON.stringify({
+      id: challengeId,
+      title: challengeData.title,
+      description: challengeData.description,
+      difficulty: challengeData.difficulty,
+      author: challengeData.author,
+      approvedAt: new Date().toISOString()
+    });
+
+    const ipfsResult = await ipfsClient.add(challengeContent);
+    const ipfsHash = ipfsResult.cid.toString();
+
+    // Pin the hash for permanence
+    await ipfsClient.pin.add(ipfsHash);
+
+    // Update smart contract
+    await initBlockchain();
+    if (!signer) {
+      throw new Error('Blockchain signer not configured');
+    }
+
+    const contract = new ethers.Contract(CHALLENGE_CONTRACT_ADDRESS, CHALLENGE_CONTRACT_ABI, signer);
+    
+    // Add challenge to contract
+    const tx = await contract.addChallenge(ipfsHash, challengeData.author);
+    await tx.wait();
+
+    return { ipfsHash, transactionHash: tx.hash };
+  } catch (error) {
+    console.error('Error deploying challenge:', error);
+    throw error;
+  }
+}
+
 // Challenge moderation endpoints
 app.get('/challenges/pending', authenticateToken, requireAdmin, async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
 
-    // TODO: Fetch pending challenges from database
+    // For now, return mock data - in production, fetch from challenge-service database
     const pendingChallenges = [
       {
         id: 'challenge_123',
@@ -83,6 +148,39 @@ app.get('/challenges/pending', authenticateToken, requireAdmin, async (req, res)
         tags: ['defi', 'security', 'audit'],
         submittedAt: '2024-12-01T00:00:00Z',
         status: 'pending_review',
+        code: 'pragma solidity ^0.8.0; contract DeFiProtocol { ... }'
+      },
+      {
+        id: 'challenge_124',
+        title: 'Smart Contract Optimization',
+        author: '0x742d35Cc6634C0532925a3b844Bc454e4438f44f',
+        description: 'Optimize gas usage in existing smart contracts',
+        difficulty: 'medium',
+        tags: ['optimization', 'gas', 'efficiency'],
+        submittedAt: '2024-12-02T00:00:00Z',
+        status: 'pending_review',
+        code: 'pragma solidity ^0.8.0; contract OptimizedContract { ... }'
+      }
+    ];
+
+    const total = pendingChallenges.length;
+    const startIndex = (Number(page) - 1) * Number(limit);
+    const paginatedChallenges = pendingChallenges.slice(startIndex, startIndex + Number(limit));
+
+    res.json({
+      challenges: paginatedChallenges,
+      pagination: {
+        page: Number(page),
+        limit: Number(limit),
+        total,
+        pages: Math.ceil(total / Number(limit))
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching pending challenges:', error);
+    res.status(500).json({ error: 'Failed to fetch pending challenges' });
+  }
+});
         contentHash: 'Qm...'
       },
       {
@@ -133,9 +231,37 @@ app.post('/challenges/:challengeId/review', authenticateToken, requireAdmin, asy
       reviewedAt: new Date().toISOString()
     };
 
-    // TODO: Update challenge status in database
-    // TODO: Notify author of review result
-    // TODO: If approved, pin to IPFS and update smart contract
+    // Store review in database
+    await prisma.challengeReview.create({
+      data: {
+        challengeId,
+        adminId,
+        action,
+        feedback,
+        reason
+      }
+    });
+
+    // TODO: Update challenge status in challenge-service database
+    // TODO: Notify author of review result via email/notification service
+    if (action === 'approve') {
+      try {
+        // For now, use mock data - in production, fetch from challenge-service
+        const challengeData = {
+          title: 'Challenge Title',
+          description: 'Challenge Description',
+          difficulty: 'medium',
+          author: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e'
+        };
+
+        // Pin to IPFS and update smart contract
+        const deployment = await approveAndDeployChallenge(challengeId, challengeData);
+        console.log('Challenge deployed:', deployment);
+      } catch (error) {
+        console.error('Failed to deploy challenge:', error);
+        return res.status(500).json({ error: 'Failed to deploy challenge to blockchain' });
+      }
+    }
 
     console.log('Challenge review submitted:', review);
 
@@ -173,7 +299,13 @@ app.post('/ipfs/pin/:hash', authenticateToken, requireAdmin, async (req, res) =>
       pinResult
     };
 
-    // TODO: Store pin record in database
+    // Store pin record in database
+    await prisma.iPFSPin.create({
+      data: {
+        hash,
+        pinnedBy: (req as any).user.id
+      }
+    });
 
     console.log('Content pinned to IPFS:', pinRecord);
 
@@ -453,3 +585,18 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
   console.log(`Admin Service running on port ${PORT}`);
 });
+
+// Graceful shutdown
+process.on('SIGTERM', async () => {
+  console.log('SIGTERM received, shutting down gracefully');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  console.log('SIGINT received, shutting down gracefully');
+  await prisma.$disconnect();
+  process.exit(0);
+});
+
+export default app;

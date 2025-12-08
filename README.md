@@ -102,6 +102,33 @@ Fathuss empowers millions of developers to master blockchain development through
 * Secure code runner
 * Gas measurement system
 
+### Architecture Diagram
+
+```mermaid
+graph TD
+    A[Frontend] --> B[API Gateway]
+    B --> C[User Service]
+    B --> D[Challenge Service]
+    B --> E[Grader Orchestration]
+    B --> F[Leaderboard Service]
+    B --> G[Audit Service]
+    B --> H[Admin Service]
+    B --> I[Hiring Service]
+    B --> J[Marketplace Service]
+    B --> K[Storage Service]
+    C --> L[Database]
+    D --> L
+    E --> L
+    F --> L
+    G --> L
+    H --> L
+    I --> L
+    J --> L
+    K --> L
+    E --> M[Blockchain]
+    D --> M
+```
+
 ---
 
 ## 🛠️ Tech Stack

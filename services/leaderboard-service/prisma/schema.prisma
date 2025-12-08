@@ -1,0 +1,66 @@
+// Prisma schema for Leaderboard Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String   @id @default(uuid())
+  address               String   @unique
+  username              String?  @unique
+  email                 String?  @unique
+  avatarUrl             String?
+  bio                   String?
+  level                 Int      @default(1)
+  experiencePoints      Int      @default(0)
+  totalScore            Float    @default(0)
+  challengesCompleted   Int      @default(0)
+  reputation            Int      @default(0)
+  currentStreak         Int      @default(0)
+  longestStreak         Int      @default(0)
+  lastActivityAt        DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  submissions           Submission[]
+
+  @@map("users")
+}
+
+model Challenge {
+  id              String   @id @default(uuid())
+  slug            String   @unique
+  title           String
+  category        String
+  difficulty      String
+  points          Int      @default(100)
+  tags            String[]
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  submissions     Submission[]
+
+  @@map("challenges")
+}
+
+model Submission {
+  id              String   @id @default(uuid())
+  challengeId     String
+  challenge       Challenge @relation(fields: [challengeId], references: [id])
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+  language        String
+  status          String   @default("pending")
+  score           Float?
+  executionTime   Int?
+  submittedAt     DateTime @default(now())
+  completedAt     DateTime?
+
+  @@index([challengeId, userId])
+  @@index([status])
+  @@map("submissions")
+}

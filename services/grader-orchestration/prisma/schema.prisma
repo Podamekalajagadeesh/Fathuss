@@ -1,0 +1,116 @@
+// Prisma schema for Grader Orchestration Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model GradingJob {
+  id            String   @id @default(cuid())
+  jobId         String   @unique
+  challengeId   String
+  userId        String
+  code          String   @db.Text
+  language      String
+  status        JobStatus @default(PENDING)
+  workerType    String
+  assignedWorkerId String?
+  gasLimit      Int      @default(1000000)
+  timeLimit     Int      @default(30)
+  enableTracing Boolean  @default(true)
+  checkPlagiarism Boolean @default(true)
+
+  // Results
+  score         Int?
+  passedTests   Int?
+  totalTests    Int?
+  gasUsed       Int?
+  timeUsed      Int?
+  output        String?  @db.Text
+  error         String?  @db.Text
+  executionTrace Json?
+  plagiarismResult Json?
+
+  // Timestamps
+  submittedAt   DateTime @default(now())
+  startedAt     DateTime?
+  completedAt   DateTime?
+
+  // Relations
+  user          User     @relation(fields: [userId], references: [id])
+  challenge     Challenge @relation(fields: [challengeId], references: [id])
+
+  @@map("grading_jobs")
+}
+
+model User {
+  id                String   @id @default(cuid())
+  address           String   @unique
+  username          String?  @unique
+  email             String?
+  avatarUrl         String?
+  bio               String?
+  level             Int      @default(1)
+  experiencePoints  Int      @default(0)
+  totalScore        Float    @default(0)
+  challengesCompleted Int    @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @default(now())
+
+  // Relations
+  submissions       GradingJob[]
+  leaderboardEntries LeaderboardEntry[]
+
+  @@map("users")
+}
+
+model Challenge {
+  id              String   @id @default(cuid())
+  title           String
+  description     String?
+  difficulty      String
+  category        String?
+  language        String?
+  timeLimit       Int?
+  memoryLimit     Int?
+  testCases       Json?
+  solutionTemplate String?
+  hints           Json?
+  tags            String[]
+  isActive        Boolean  @default(true)
+  createdBy       String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now())
+
+  // Relations
+  submissions     GradingJob[]
+
+  @@map("challenges")
+}
+
+model LeaderboardEntry {
+  id          String   @id @default(cuid())
+  userId      String
+  challengeId String
+  score       Float
+  rank        Int
+  category    String?
+  period      String
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user        User     @relation(fields: [userId], references: [id])
+
+  @@map("leaderboard")
+}
+
+enum JobStatus {
+  PENDING
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}

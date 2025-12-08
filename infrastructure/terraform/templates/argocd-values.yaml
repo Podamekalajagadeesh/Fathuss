@@ -1,0 +1,30 @@
+global:
+  image:
+    tag: v2.8.4
+
+server:
+  ingress:
+    enabled: true
+    className: nginx
+    hosts:
+      - argocd.${domain}
+    tls:
+      - secretName: argocd-tls
+        hosts:
+          - argocd.${domain}
+
+  config:
+    url: https://argocd.${domain}
+    admin.enabled: true
+
+  rbacConfig:
+    policy.csv: |
+      g, argocd-admin, role:admin
+
+configs:
+  cm:
+    timeout.reconciliation: 180s
+    timeout.hard.reconciliation: 0s
+
+  params:
+    server.insecure: true

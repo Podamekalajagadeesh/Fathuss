@@ -1,0 +1,101 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "fathuss.fullname" . }}-alerts
+  labels:
+    {{- include "fathuss.labels" . | nindent 4 }}
+    prometheus: kube-prometheus
+    role: alert-rules
+spec:
+  groups:
+  - name: fathuss.rules
+    rules:
+    - alert: HighGraderQueueLength
+      expr: grader_queue_length > 50
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High grader queue length detected"
+        description: "Grader queue length is $value, which is above the threshold of 50."
+
+    - alert: GraderJobDurationHigh
+      expr: histogram_quantile(0.95, rate(grader_job_duration_bucket[5m])) > 300
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High grader job duration detected"
+        description: "95th percentile of grader job duration is $value s, which is above the threshold of 300s."
+
+    - alert: ServiceDown
+      expr: up == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Service $labels.job is down"
+        description: "Service $labels.job has been down for more than 5 minutes."
+
+    - alert: HighErrorRate
+      expr: rate(http_requests_total{status=~"[45].."}[5m]) / rate(http_requests_total[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High error rate detected"
+        description: "Error rate for $labels.job is $value, which is above the threshold of 10%."
+
+    - alert: ContainerHighCPU
+      expr: rate(container_cpu_usage_seconds_total[5m]) / container_spec_cpu_quota * 100 > 80
+      for: 10m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage detected"
+        description: "Container $labels.pod has high CPU usage: $value %"
+
+    - alert: ContainerHighMemory
+      expr: container_memory_usage_bytes / container_spec_memory_limit_bytes * 100 > 85
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage detected"
+        description: "Container $labels.pod has high memory usage: $value %"
+
+    - alert: GraderWorkerPoolExhausted
+      expr: grader_active_workers == grader_worker_pool_size
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "Grader worker pool exhausted"
+        description: "All grader workers are active. Consider scaling up the worker pool."
+
+    - alert: DatabaseConnectionErrors
+      expr: rate(database_connection_errors_total[5m]) > 5
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High database connection errors"
+        description: "Database connection errors are occurring at rate $value /s"
+
+    - alert: RabbitMQQueueDepthHigh
+      expr: rabbitmq_queue_messages > 1000
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High RabbitMQ queue depth"
+        description: "RabbitMQ queue $labels.queue has $value messages"
+
+    - alert: AuditEventRateHigh
+      expr: rate(audit_events_total[5m]) > 100
+      for: 5m
+      labels:
+        severity: info
+      annotations:
+        summary: "High audit event rate"
+        description: "Audit events are being generated at rate $value /s"

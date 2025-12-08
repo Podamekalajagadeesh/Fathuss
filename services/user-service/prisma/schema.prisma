@@ -1,0 +1,163 @@
+// Prisma schema for User Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                    String   @id @default(uuid())
+  address               String   @unique
+  username              String?  @unique
+  email                 String?  @unique
+  passwordHash          String?
+  role                  String   @default("user") // user, creator, admin
+  avatarUrl             String?
+  bio                   String?
+  level                 Int      @default(1)
+  experiencePoints      Int      @default(0) // xp
+  totalScore            Float    @default(0)
+  challengesCompleted   Int      @default(0)
+  reputation            Int      @default(0)
+  currentStreak         Int      @default(0) // streak
+  longestStreak         Int      @default(0)
+  lastActivityAt        DateTime?
+  createdAt             DateTime @default(now()) // created_at
+  updatedAt             DateTime @updatedAt // updated_at
+
+  // Wallet linkages
+  linkedWallets         LinkedWallet[]
+
+  // Badges and achievements
+  badges                UserBadge[]
+
+  // Certification NFTs
+  certifications        Certification[]
+
+  // Solve history
+  submissions           Submission[]
+
+  // Marketplace activity
+  marketplaceItems      MarketplaceItem[] @relation("SellerItems")
+  purchasedItems        MarketplaceItem[] @relation("PurchasedItems")
+
+  // Job applications
+  jobApplications       JobApplication[]
+
+  @@map("users")
+}
+
+model LinkedWallet {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  address     String
+  chainId     Int
+  isPrimary   Boolean  @default(false)
+  linkedAt    DateTime @default(now())
+
+  @@unique([userId, address])
+  @@map("linked_wallets")
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  iconUrl     String?
+  category    String
+  rarity      String   @default("common") // common, rare, epic, legendary
+  xpReward    Int      @default(0)
+  criteria    Json?    // JSON object defining unlock criteria
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  // Relations
+  userBadges  UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  badgeId   String
+  badge     Badge    @relation(fields: [badgeId], references: [id])
+  earnedAt  DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model Certification {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title         String
+  description   String
+  issuer        String
+  nftContract   String?
+  tokenId       String?
+  metadataUrl   String?
+  issuedAt      DateTime
+  expiresAt     DateTime?
+  isValid       Boolean  @default(true)
+  verificationUrl String?
+
+  @@map("certifications")
+}
+
+model Submission {
+  id              String     @id @default(uuid())
+  userId          String
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challengeId     String
+  code            String
+  language        String
+  status          String     @default("pending") // pending, running, completed, failed
+  score           Float?
+  executionTime   Int?       // milliseconds
+  memoryUsed      Int?       // KB
+  errorMessage    String?
+  submittedAt     DateTime   @default(now())
+  completedAt     DateTime?
+
+  @@map("submissions")
+}
+
+model MarketplaceItem {
+  id          String   @id @default(uuid())
+  title       String
+  description String?
+  price       Float
+  currency    String   @default("ETH")
+  itemType    String   // nft, template, tool, service
+  metadata    Json?
+  sellerId    String
+  seller      User     @relation("SellerItems", fields: [sellerId], references: [id])
+  buyerId     String?
+  buyer       User?    @relation("PurchasedItems", fields: [buyerId], references: [id])
+  status      String   @default("available") // available, sold, cancelled
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("marketplace_items")
+}
+
+model JobApplication {
+  id            String   @id @default(uuid())
+  jobId         String
+  applicantId   String
+  applicant     User     @relation(fields: [applicantId], references: [id])
+  coverLetter   String?
+  resumeUrl     String?
+  status        String   @default("pending") // pending, reviewed, interviewed, accepted, rejected
+  appliedAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("job_applications")
+}

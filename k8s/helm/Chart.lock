@@ -1,0 +1,21 @@
+dependencies:
+- name: postgresql
+  repository: https://charts.bitnami.com/bitnami
+  version: 12.1.6
+- name: redis
+  repository: https://charts.bitnami.com/bitnami
+  version: 17.3.17
+- name: rabbitmq
+  repository: https://charts.bitnami.com/bitnami
+  version: 11.1.0
+- name: kube-prometheus-stack
+  repository: https://prometheus-community.github.io/helm-charts
+  version: 55.7.0
+- name: loki-stack
+  repository: https://grafana.github.io/helm-charts
+  version: 2.9.11
+- name: sentry
+  repository: https://sentry-kubernetes.github.io/charts
+  version: 20.8.0
+digest: sha256:768e18fd44bd131cd8ae0d9501ce63bec24cc2804b213c7e72946fd46b6fd9a9
+generated: "2025-12-05T13:31:54.606385598Z"

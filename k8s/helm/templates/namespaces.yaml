@@ -1,0 +1,15 @@
+{{- if .Values.namespaces.create }}
+{{- range .Values.namespaces.environments }}
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .name }}
+  labels:
+    name: {{ .name }}
+    environment: {{ .environment }}
+    {{- include "fathuss.labels" $ | nindent 4 }}
+  annotations:
+    scheduler.alpha.kubernetes.io/defaultTolerations: '[{"key":"dedicated","operator":"Equal","value":"{{ .name }}","effect":"NoSchedule"}]'
+{{- end }}
+{{- end }}

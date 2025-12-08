@@ -1,0 +1,268 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # Test and build all services
+  test-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      clickhouse:
+        image: clickhouse/clickhouse-server:23-alpine
+        options: >-
+          --health-cmd "clickhouse-client --query 'SELECT 1'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    strategy:
+      matrix:
+        service: [api-gateway, user-service, challenge-service, grader-orchestration, storage-service, admin-service, hiring-service, leaderboard-service, marketplace-service]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: ${{ matrix.service }}/package-lock.json
+
+    - name: Install dependencies
+      run: |
+        cd ${{ matrix.service }}
+        npm ci
+
+    - name: Run linting
+      run: |
+        cd ${{ matrix.service }}
+        npm run lint
+
+    - name: Run unit tests
+      run: |
+        cd ${{ matrix.service }}
+        npm run test:unit
+
+    - name: Run integration tests
+      run: |
+        cd ${{ matrix.service }}
+        npm run test:integration
+      env:
+        DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fathuss_test
+        REDIS_URL: redis://localhost:6379
+        CLICKHOUSE_URL: http://localhost:8123
+
+  # Test frontend
+  test-frontend:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: package-lock.json
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run linting
+      run: npm run lint
+
+    - name: Run unit tests
+      run: npm run test:unit
+
+    - name: Run integration tests
+      run: npm run test:e2e:ci
+
+  # Test grader worker
+  test-grader:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: rustfmt, clippy
+
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: "grader-orchestration/src -> target"
+
+    - name: Run tests
+      run: |
+        cd grader-orchestration
+        cargo test
+
+    - name: Run clippy
+      run: |
+        cd grader-orchestration
+        cargo clippy -- -D warnings
+
+    - name: Run rustfmt check
+      run: |
+        cd grader-orchestration
+        cargo fmt --check
+
+  # Build and push Docker images
+  build:
+    needs: [test-backend, test-frontend, test-grader]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [api-gateway, user-service, challenge-service, grader-orchestration, storage-service, admin-service, hiring-service, leaderboard-service, marketplace-service, audit-service]
+        include:
+          - service: frontend
+            context: .
+            dockerfile: Dockerfile.frontend
+          - service: grader-worker
+            context: grader-orchestration
+            dockerfile: worker.Dockerfile
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Log in to Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ env.REGISTRY }}
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Extract metadata
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/${{ matrix.service }}
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ matrix.context || matrix.service }}
+        file: ${{ matrix.dockerfile || 'Dockerfile' }}
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  # Security scanning
+  security-scan:
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        scan-type: 'fs'
+        scan-ref: '.'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  # Deploy to staging
+  deploy-staging:
+    needs: [build, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    environment: staging
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+
+    - name: Update ArgoCD application
+      uses: argoproj-labs/argocd-action@v1
+      with:
+        address: ${{ secrets.ARGOCD_SERVER }}
+        token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        app-name: fathuss-staging
+        app-namespace: argocd
+        operation: sync
+
+  # Deploy to production
+  deploy-production:
+    needs: [build, security-scan]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Configure kubectl
+      uses: azure/k8s-set-context@v3
+      with:
+        method: kubeconfig
+        kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
+
+    - name: Update ArgoCD application
+      uses: argoproj-labs/argocd-action@v1
+      with:
+        address: ${{ secrets.ARGOCD_SERVER }}
+        token: ${{ secrets.ARGOCD_AUTH_TOKEN }}
+        app-name: fathuss-production
+        app-namespace: argocd
+        operation: sync

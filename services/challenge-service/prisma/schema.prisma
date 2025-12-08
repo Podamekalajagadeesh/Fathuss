@@ -1,0 +1,167 @@
+// Prisma schema for Challenge Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Challenge {
+  id              String   @id @default(uuid())
+  slug            String   @unique
+  title           String
+  description     String?
+  shortDescription String?
+  category        String
+  difficulty      String   // beginner, intermediate, advanced, expert
+  points          Int      @default(100)
+  timeLimit       Int      // in minutes
+  memoryLimit     Int?     // in MB
+  tags            String[]
+  isActive        Boolean  @default(true)
+  createdBy       String   // user address
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // Relations
+  versions        ChallengeVersion[]
+  submissions     Submission[]
+
+  @@map("challenges")
+}
+
+model ChallengeVersion {
+  id              String   @id @default(uuid())
+  challengeId     String
+  challenge       Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  version         Int      // incremental version number
+  title           String
+  description     String?
+  starterCode     String?
+  hints           ChallengeHint[]
+  testManifest    TestManifest?
+  fixtures        ChallengeFixture[]
+  isPublished     Boolean  @default(false)
+  isRetired       Boolean  @default(false)
+  publishedAt     DateTime?
+  retiredAt       DateTime?
+  createdBy       String   // user address
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([challengeId, version])
+  @@map("challenge_versions")
+}
+
+model ChallengeHint {
+  id              String   @id @default(uuid())
+  versionId       String
+  version         ChallengeVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  order           Int      // display order
+  content         String
+  cost            Int      @default(0) // XP cost to unlock
+  isActive        Boolean  @default(true)
+
+  @@map("challenge_hints")
+}
+
+model TestManifest {
+  id              String   @id @default(uuid())
+  versionId       String   @unique
+  version         ChallengeVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  language        String
+  framework       String?
+  testRunner      String?
+  timeout         Int      @default(30) // seconds
+  memoryLimit     Int?     // MB
+  testCases       TestCase[]
+  setupCommands   String[] // shell commands to run before tests
+  teardownCommands String[] // shell commands to run after tests
+  environment     Json?    // environment variables
+  ipfsHash        String?  // IPFS hash of test files
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@map("test_manifests")
+}
+
+model TestCase {
+  id              String   @id @default(uuid())
+  manifestId      String
+  manifest        TestManifest @relation(fields: [manifestId], references: [id], onDelete: Cascade)
+  name            String
+  description     String?
+  input           Json?    // test input data
+  expectedOutput  Json?    // expected output
+  isPublic        Boolean  @default(false) // show input/output to users
+  points          Int      @default(1)
+  timeout         Int?     // override timeout for this test
+  order           Int      // execution order
+
+  @@map("test_cases")
+}
+
+model ChallengeFixture {
+  id              String   @id @default(uuid())
+  versionId       String
+  version         ChallengeVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  name            String   // filename
+  type            String   // testcase, fixture, binary, etc.
+  ipfsHash        String
+  fileSize        Int
+  mimeType        String?
+  description     String?
+  isRequired      Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  @@map("challenge_fixtures")
+}
+
+model Submission {
+  id              String   @id @default(uuid())
+  challengeId     String
+  challenge       Challenge @relation(fields: [challengeId], references: [id])
+  versionId       String?  // which version was submitted against
+  userId          String   // user address
+  code            String
+  language        String
+  status          String   @default("pending") // pending, running, completed, failed
+  score           Float?
+  maxScore        Int?
+  executionTime   Int?     // milliseconds
+  memoryUsed      Int?     // KB
+  errorMessage    String?
+  testResults     Json?    // detailed test results
+  submittedAt     DateTime @default(now())
+  completedAt     DateTime?
+
+  @@index([challengeId, userId])
+  @@index([status])
+  @@map("submissions")
+}
+
+model ChallengeTag {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  category    String   // language, concept, framework, etc.
+  color       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("challenge_tags")
+}
+
+model ChallengeCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  icon        String?
+  color       String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  @@map("challenge_categories")
+}

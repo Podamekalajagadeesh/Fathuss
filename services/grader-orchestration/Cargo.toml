@@ -1,0 +1,38 @@
+[package]
+name = "fathuss-worker"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "fathuss_worker"
+path = "src/lib.rs"
+
+[[bin]]
+name = "worker"
+path = "src/worker.rs"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+warp = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.0"
+futures = "0.3"
+reqwest = { version = "0.11", features = ["json"] }
+sha2 = "0.10"
+hex = "0.4"
+rand = "0.8"
+uuid = { version = "1.0", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1.10"
+libc = "0.2"
+rlimit = "0.10"
+nix = { version = "0.27", features = ["user", "resource"] }
+cgroups-rs = "0.3"
+syn = { version = "2.0", features = ["full", "extra-traits"] }
+swc_ecma_parser = "0.143"
+swc_common = "0.33"
+swc_ecma_ast = "0.111"
+petgraph = "0.6"
+strsim = "0.10"
+md5 = "0.7"

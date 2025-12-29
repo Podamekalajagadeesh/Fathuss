@@ -56,6 +56,11 @@ export const submitChallenge = async (challengeId: string, code: string) => {
   return response.data
 }
 
+export const fetchSubmissionResult = async (submissionId: string) => {
+  const response = await apiClient.get(`/api/submissions/${submissionId}`)
+  return response.data
+}
+
 export const fetchSolvedChallenges = async (address: string): Promise<{ solvedChallenges: any[]; pagination: any }> => {
   const response = await apiClient.get(`/challenges/users/${address}/solved`)
   return response.data
@@ -69,4 +74,9 @@ export const fetchCurrentUser = async (): Promise<{ address: string; username?: 
 export const fetchSolvedChallengeIds = async (address: string): Promise<string[]> => {
   const response = await apiClient.get(`/challenges/users/${address}/solved?limit=1000`)
   return response.data.solvedChallenges.map((c: any) => c.id)
+}
+
+export const fetchUserBadges = async (address: string): Promise<any[]> => {
+  const response = await apiClient.get(`/users/${address}/badges`)
+  return response.data.badges
 }

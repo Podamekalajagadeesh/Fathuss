@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS challenge_versions (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     challenge_id UUID REFERENCES challenges(id),
     content_cid VARCHAR(100),
-    tests_cid VARCHAR(100),
+    public_tests_cid VARCHAR(100),
+    hidden_tests_cid VARCHAR(100),
     fixtures_cid VARCHAR(100),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     status VARCHAR(20) DEFAULT 'draft' CHECK (status IN ('draft', 'published', 'archived'))
@@ -63,6 +64,28 @@ CREATE TABLE IF NOT EXISTS leaderboard_entries (
     best_gas INTEGER,
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     PRIMARY KEY (user_id, challenge_id)
+);
+
+-- Badges table
+CREATE TABLE IF NOT EXISTS badges (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name VARCHAR(100) NOT NULL,
+    description TEXT,
+    icon_url VARCHAR(255),
+    category VARCHAR(50), -- 'achievement', 'skill', 'special'
+    rarity VARCHAR(20) CHECK (rarity IN ('common', 'rare', 'epic', 'legendary')),
+    xp_reward INTEGER DEFAULT 0,
+    criteria JSONB, -- flexible criteria for earning badges
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- User badges table
+CREATE TABLE IF NOT EXISTS user_badges (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id),
+    badge_id UUID REFERENCES badges(id),
+    earned_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(user_id, badge_id)
 );
 
 -- Audit traces table
@@ -147,6 +170,10 @@ CREATE INDEX IF NOT EXISTS idx_jobs_challenge_id ON jobs(challenge_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_entries_user_id ON leaderboard_entries(user_id);
 CREATE INDEX IF NOT EXISTS idx_leaderboard_entries_challenge_id ON leaderboard_entries(challenge_id);
+CREATE INDEX IF NOT EXISTS idx_badges_category ON badges(category);
+CREATE INDEX IF NOT EXISTS idx_badges_rarity ON badges(rarity);
+CREATE INDEX IF NOT EXISTS idx_user_badges_user_id ON user_badges(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_badges_badge_id ON user_badges(badge_id);
 CREATE INDEX IF NOT EXISTS idx_audit_traces_job_id ON audit_traces(job_id);
 CREATE INDEX IF NOT EXISTS idx_payments_author_id ON payments(author_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_poster ON jobs(poster_id);

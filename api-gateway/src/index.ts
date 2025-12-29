@@ -595,15 +595,10 @@ app.get('/users/:address', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/users/:address', authenticateToken, async (req, res) => {
+app.get('/users/:address/badges', authenticateToken, async (req, res) => {
   try {
-    const response = await fetch(`http://localhost:4001/users/${req.params.address}`, {
-      method: 'PUT',
-      headers: {
-        'Authorization': req.headers.authorization!,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(req.body)
+    const response = await fetch(`http://localhost:4001/users/${req.params.address}/badges`, {
+      headers: { 'Authorization': req.headers.authorization! }
     });
     const data = await response.json();
     res.json(data);

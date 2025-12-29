@@ -4,11 +4,12 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, ClockIcon, ArrowRightIcon, CodeBracketIcon, StarIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import Logo from '../../components/Logo'
-import { fetchLeaderboard, fetchSolvedChallenges, fetchCurrentUser } from '@/lib/api'
+import { fetchLeaderboard, fetchSolvedChallenges, fetchCurrentUser, fetchUserBadges } from '@/lib/api'
 
 export default function Dashboard() {
   const [recentlySolved, setRecentlySolved] = useState<{ id: number; title: string; difficulty: string; solvedAt: string }[]>([])
   const [leaderboardPreview, setLeaderboardPreview] = useState<{ rank: number; name: string; score: number; avatar: string; isCurrentUser?: boolean }[]>([])
+  const [userBadges, setUserBadges] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -27,6 +28,10 @@ export default function Dashboard() {
         }))
 
         setRecentlySolved(recentlySolved)
+
+        // Fetch user badges
+        const badges = await fetchUserBadges(currentUser.address)
+        setUserBadges(badges.slice(0, 6)) // Show latest 6 badges
 
         const leaderboardData = await fetchLeaderboard()
         // Assuming leaderboardData is an array with rank, name, score, etc.
@@ -115,7 +120,7 @@ export default function Dashboard() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Recently Solved Problems */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <div className="flex items-center mb-6">
@@ -149,6 +154,46 @@ export default function Dashboard() {
                 View all solved problems →
               </Link>
             </div>
+          </div>
+
+          {/* Badges */}
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+            <div className="flex items-center mb-6">
+              <TrophyIcon className="h-6 w-6 text-purple-500 mr-2" />
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Badges</h3>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              {userBadges.length > 0 ? userBadges.map((badge) => (
+                <div key={badge.id} className="flex flex-col items-center p-4 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+                  <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-lg font-bold mb-2">
+                    {badge.name.charAt(0)}
+                  </div>
+                  <h4 className="text-sm font-medium text-gray-900 dark:text-white text-center">{badge.name}</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-1">{badge.description}</p>
+                  <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full mt-2 ${
+                    badge.rarity === 'common' ? 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200' :
+                    badge.rarity === 'rare' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                    badge.rarity === 'epic' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                    'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
+                  }`}>
+                    {badge.rarity}
+                  </span>
+                </div>
+              )) : (
+                <div className="col-span-2 text-center py-8">
+                  <TrophyIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                  <p className="text-gray-500 dark:text-gray-400">No badges earned yet</p>
+                  <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">Complete challenges to earn badges!</p>
+                </div>
+              )}
+            </div>
+            {userBadges.length > 4 && (
+              <div className="mt-6 text-center">
+                <button className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium">
+                  View all badges →
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Leaderboard Preview */}

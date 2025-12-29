@@ -310,26 +310,64 @@ app.post('/challenges/:id/submit', authenticateToken, async (req, res) => {
       }
     });
 
-    // TODO: Send to grader service asynchronously
-    // For now, we'll simulate grading
-    setTimeout(async () => {
-      try {
-        // Simulate grading result
-        const score = Math.floor(Math.random() * 100);
-        await prisma.submission.update({
-          where: { id: submission.id },
-          data: {
-            status: 'completed',
-            score,
-            maxScore: challenge.points,
-            executionTime: Math.floor(Math.random() * 1000),
-            completedAt: new Date()
-          }
-        });
-      } catch (error) {
-        console.error('Error updating submission:', error);
+    // Send to grader service asynchronously
+    try {
+      const graderResponse = await fetch('http://localhost:4006/submit', {
+        method: 'POST',
+        headers: {
+          'Authorization': req.headers.authorization!,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          challengeId: id,
+          code,
+          language,
+          userId
+        })
+      });
+
+      if (!graderResponse.ok) {
+        throw new Error(`Grader service error: ${graderResponse.status}`);
       }
-    }, 2000); // Simulate 2 second grading time
+
+      const graderResult = await graderResponse.json();
+
+      // Update submission with initial grader job info
+      await prisma.submission.update({
+        where: { id: submission.id },
+        data: {
+          status: 'running',
+          // Store grader job ID for tracking
+          executionTime: null // Will be updated when grading completes
+        }
+      });
+
+    } catch (graderError) {
+      console.error('Failed to submit to grader service:', graderError);
+      // Fallback to simulation for now, but log the error
+      setTimeout(async () => {
+        try {
+          const score = Math.floor(Math.random() * 100);
+          await prisma.submission.update({
+            where: { id: submission.id },
+            data: {
+              status: 'completed',
+              score,
+              maxScore: challenge.points,
+              executionTime: Math.floor(Math.random() * 1000),
+              completedAt: new Date()
+            }
+          });
+
+          // Award badges and XP after successful submission
+          if (score >= 70) { // Passing score
+            await awardBadgesAndXP(userId, challenge.id, score, challenge.points);
+          }
+        } catch (error) {
+          console.error('Error in fallback grading:', error);
+        }
+      }, 2000);
+    }
 
     res.status(201).json({
       submissionId: submission.id,
@@ -743,27 +781,156 @@ app.post('/fixtures/upload', authenticateToken, requireAuthor, async (req, res) 
   }
 });
 
-// Download fixture from IPFS
-app.get('/fixtures/:hash', async (req, res) => {
+// Award badges and XP for successful challenge completion
+async function awardBadgesAndXP(userId: string, challengeId: string, score: number, maxScore: number) {
   try {
-    const { hash } = req.params;
-
-    // Download from IPFS
-    const chunks = [];
-    for await (const chunk of ipfs.cat(hash)) {
-      chunks.push(chunk);
-    }
-    const content = Buffer.concat(chunks).toString();
-
-    res.json({
-      hash,
-      content
+    // Award XP based on challenge difficulty and score
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId }
     });
+
+    if (!challenge) return;
+
+    // Calculate XP based on difficulty and score
+    const difficultyMultiplier = {
+      'easy': 1,
+      'medium': 1.5,
+      'hard': 2,
+      'expert': 3
+    }[challenge.difficulty] || 1;
+
+    const xpEarned = Math.floor((score / 100) * maxScore * difficultyMultiplier);
+
+    // Update user XP
+    await prisma.user.update({
+      where: { address: userId },
+      data: {
+        experiencePoints: {
+          increment: xpEarned
+        },
+        challengesCompleted: {
+          increment: 1
+        }
+      }
+    });
+
+    // Check for badge awards
+    await checkAndAwardBadges(userId);
+
   } catch (error) {
-    console.error('Error downloading fixture:', error);
-    res.status(500).json({ error: 'Failed to download fixture' });
+    console.error('Error awarding badges and XP:', error);
   }
-});
+}
+
+// Check and award badges based on user achievements
+async function checkAndAwardBadges(userId: string) {
+  try {
+    const user = await prisma.user.findUnique({
+      where: { address: userId },
+      include: {
+        badges: {
+          include: { badge: true }
+        }
+      }
+    });
+
+    if (!user) return;
+
+    // Get all available badges
+    const allBadges = await prisma.badge.findMany({
+      where: { isActive: true }
+    });
+
+    for (const badge of allBadges) {
+      // Skip if user already has this badge
+      const hasBadge = user.badges.some(ub => ub.badgeId === badge.id);
+      if (hasBadge) continue;
+
+      // Check badge criteria
+      const qualifies = await checkBadgeCriteria(user, badge);
+      if (qualifies) {
+        // Award badge
+        await prisma.userBadge.create({
+          data: {
+            userId: user.id,
+            badgeId: badge.id
+          }
+        });
+
+        // Award XP from badge
+        await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            experiencePoints: {
+              increment: badge.xpReward
+            }
+          }
+        });
+
+        console.log(`Awarded badge "${badge.name}" to user ${userId}`);
+      }
+    }
+  } catch (error) {
+    console.error('Error checking badge criteria:', error);
+  }
+}
+
+// Check if user qualifies for a specific badge
+async function checkBadgeCriteria(user: any, badge: any): Promise<boolean> {
+  try {
+    const criteria = badge.criteria;
+
+    switch (badge.name) {
+      case 'First Steps':
+        return user.challengesCompleted >= 1;
+
+      case 'Problem Solver':
+        return user.challengesCompleted >= 5;
+
+      case 'Code Master':
+        return user.challengesCompleted >= 25;
+
+      case 'XP Collector':
+        return user.experiencePoints >= 1000;
+
+      case 'Streak Master':
+        return user.currentStreak >= 7;
+
+      case 'Perfect Score':
+        // Check if user has any perfect scores
+        const perfectSubmissions = await prisma.submission.count({
+          where: {
+            userId: user.address,
+            score: {
+              gte: 100
+            }
+          }
+        });
+        return perfectSubmissions > 0;
+
+      case 'Speed Demon':
+        // Check if user has completed a challenge in under 30 seconds
+        const fastSubmissions = await prisma.submission.count({
+          where: {
+            userId: user.address,
+            executionTime: {
+              lt: 30000 // 30 seconds
+            },
+            score: {
+              gte: 70
+            }
+          }
+        });
+        return fastSubmissions > 0;
+
+      default:
+        return false;
+    }
+  } catch (error) {
+    console.error('Error checking badge criteria:', error);
+    return false;
+  }
+}
 
 // Get solved challenges for user
 app.get('/users/:address/solved', authenticateToken, async (req, res) => {
@@ -848,6 +1015,99 @@ app.get('/health', async (req, res) => {
       timestamp: new Date().toISOString(),
       database: 'disconnected'
     });
+  }
+});
+
+// Seed initial badges (run once)
+app.post('/admin/seed-badges', authenticateToken, requireRole(['admin']), async (req, res) => {
+  try {
+    const badges = [
+      {
+        name: 'First Steps',
+        description: 'Complete your first challenge',
+        iconUrl: '/badges/first-steps.png',
+        category: 'achievement',
+        rarity: 'common',
+        xpReward: 50,
+        criteria: { type: 'challenges_completed', min: 1 }
+      },
+      {
+        name: 'Problem Solver',
+        description: 'Solve 5 challenges',
+        iconUrl: '/badges/problem-solver.png',
+        category: 'achievement',
+        rarity: 'common',
+        xpReward: 100,
+        criteria: { type: 'challenges_completed', min: 5 }
+      },
+      {
+        name: 'Code Master',
+        description: 'Solve 25 challenges',
+        iconUrl: '/badges/code-master.png',
+        category: 'achievement',
+        rarity: 'rare',
+        xpReward: 500,
+        criteria: { type: 'challenges_completed', min: 25 }
+      },
+      {
+        name: 'XP Collector',
+        description: 'Earn 1000 XP',
+        iconUrl: '/badges/xp-collector.png',
+        category: 'achievement',
+        rarity: 'rare',
+        xpReward: 200,
+        criteria: { type: 'experience_points', min: 1000 }
+      },
+      {
+        name: 'Streak Master',
+        description: 'Maintain a 7-day solving streak',
+        iconUrl: '/badges/streak-master.png',
+        category: 'achievement',
+        rarity: 'epic',
+        xpReward: 300,
+        criteria: { type: 'current_streak', min: 7 }
+      },
+      {
+        name: 'Perfect Score',
+        description: 'Achieve a perfect score on any challenge',
+        iconUrl: '/badges/perfect-score.png',
+        category: 'skill',
+        rarity: 'rare',
+        xpReward: 150,
+        criteria: { type: 'perfect_submission', min: 1 }
+      },
+      {
+        name: 'Speed Demon',
+        description: 'Solve a challenge in under 30 seconds',
+        iconUrl: '/badges/speed-demon.png',
+        category: 'skill',
+        rarity: 'epic',
+        xpReward: 250,
+        criteria: { type: 'fast_submission', min: 1 }
+      }
+    ];
+
+    const createdBadges = [];
+    for (const badgeData of badges) {
+      const existingBadge = await prisma.badge.findUnique({
+        where: { name: badgeData.name }
+      });
+
+      if (!existingBadge) {
+        const badge = await prisma.badge.create({
+          data: badgeData
+        });
+        createdBadges.push(badge);
+      }
+    }
+
+    res.json({
+      message: `Seeded ${createdBadges.length} badges`,
+      badges: createdBadges
+    });
+  } catch (error) {
+    console.error('Error seeding badges:', error);
+    res.status(500).json({ error: 'Failed to seed badges' });
   }
 });
 

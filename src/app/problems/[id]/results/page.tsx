@@ -1,9 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import Link from 'next/link'
-import { useSearchParams } from 'next/navigation'
-import { ArrowLeftIcon, CheckCircleIcon, XCircleIcon, ClockIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
+import { fetchSubmissionResult } from '@/lib/api'
 
 interface SubmissionResult {
   submissionId: string
@@ -43,58 +40,49 @@ export default function ProblemResults({ params }: ProblemResultsProps) {
   useEffect(() => {
     if (!submissionId) return
 
-    // Mock API call - replace with actual API when backend is ready
     const fetchResult = async () => {
       try {
-        // Simulate API delay
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        const result = await fetchSubmissionResult(submissionId)
 
-        // Mock result data
-        const mockResult: SubmissionResult = {
-          submissionId,
-          status: Math.random() > 0.3 ? 'accepted' : 'wrong_answer', // Random for demo
-          testCasesPassed: 8,
-          totalTestCases: 10,
-          executionTime: Math.floor(Math.random() * 100) + 10,
-          memoryUsed: Math.floor(Math.random() * 50) + 10,
-          testCaseResults: [
-            {
-              input: 'nums = [2,7,11,15], target = 9',
-              expectedOutput: '[0,1]',
-              actualOutput: '[0,1]',
-              passed: true
-            },
-            {
-              input: 'nums = [3,2,4], target = 6',
-              expectedOutput: '[1,2]',
-              actualOutput: '[1,2]',
-              passed: true
-            },
-            {
-              input: 'nums = [3,3], target = 6',
-              expectedOutput: '[0,1]',
-              actualOutput: '[0,1]',
-              passed: true
-            },
-            {
-              input: 'nums = [1,2,3,4], target = 7',
-              expectedOutput: '[2,3]',
-              actualOutput: '[1,2]',
-              passed: false
-            }
-          ]
+        // Transform the API result to match the expected format
+        const transformedResult: SubmissionResult = {
+          submissionId: result.id,
+          status: result.status === 'completed' ? (result.score >= 70 ? 'accepted' : 'wrong_answer') : result.status,
+          testCasesPassed: result.score ? Math.floor((result.score / result.maxScore) * 10) : 0,
+          totalTestCases: 10, // Default assumption
+          executionTime: result.executionTime || 0,
+          memoryUsed: result.memoryUsed || 0,
+          testCaseResults: result.testResults ? result.testResults.map((test: any, index: number) => ({
+            input: test.input || `Test Case ${index + 1}`,
+            expectedOutput: test.expectedOutput || 'Expected output',
+            actualOutput: test.actualOutput || 'Your output',
+            passed: test.passed || false
+          })) : []
         }
 
-        setResult(mockResult)
+        setResult(transformedResult)
       } catch (error) {
         console.error('Failed to fetch result:', error)
+        // If API fails, show error state
+        setResult(null)
       } finally {
         setLoading(false)
       }
     }
 
     fetchResult()
-  }, [submissionId])
+
+    // Poll for updates if submission is still pending
+    const pollInterval = setInterval(() => {
+      if (result?.status === 'pending' || result?.status === 'running') {
+        fetchResult()
+      } else {
+        clearInterval(pollInterval)
+      }
+    }, 2000)
+
+    return () => clearInterval(pollInterval)
+  }, [submissionId, result?.status])
 
   if (loading) {
     return (

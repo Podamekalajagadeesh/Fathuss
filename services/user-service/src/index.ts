@@ -143,6 +143,37 @@ app.put('/users/:address', authenticateToken, async (req, res) => {
   }
 });
 
+// Get user badges
+app.get('/users/:address/badges', authenticateToken, async (req, res) => {
+  try {
+    const { address } = req.params;
+
+    const user = await prisma.user.findUnique({
+      where: { address: address.toLowerCase() },
+      include: {
+        badges: {
+          include: { badge: true },
+          orderBy: { earnedAt: 'desc' }
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    res.json({
+      badges: user.badges.map(ub => ({
+        ...ub.badge,
+        earnedAt: ub.earnedAt
+      }))
+    });
+  } catch (error) {
+    console.error('Error fetching user badges:', error);
+    res.status(500).json({ error: 'Failed to fetch user badges' });
+  }
+});
+
 // Get user statistics and solve history
 app.get('/users/:address/stats', authenticateToken, async (req, res) => {
   try {

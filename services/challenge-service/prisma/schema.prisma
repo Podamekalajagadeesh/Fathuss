@@ -40,6 +40,8 @@ model ChallengeVersion {
   title           String
   description     String?
   starterCode     String?
+  publicTestsCid  String?  // IPFS CID for public test cases
+  hiddenTestsCid  String?  // IPFS CID for hidden test cases
   hints           ChallengeHint[]
   testManifest    TestManifest?
   fixtures        ChallengeFixture[]

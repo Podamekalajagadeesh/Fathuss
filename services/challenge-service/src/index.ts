@@ -61,6 +61,17 @@ const requireAuthor = (req: express.Request, res: express.Response, next: expres
   next();
 };
 
+// RBAC middleware
+const requireRole = (roles: string[]) => {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    const user = (req as any).user;
+    if (!user || !user.role || !roles.includes(user.role)) {
+      return res.status(403).json({ error: 'Insufficient permissions' });
+    }
+    next();
+  };
+};
+
 // Get all challenges with filtering and pagination
 app.get('/challenges', authenticateToken, async (req, res) => {
   try {
@@ -1087,7 +1098,7 @@ app.post('/admin/seed-badges', authenticateToken, requireRole(['admin']), async 
       }
     ];
 
-    const createdBadges = [];
+    const createdBadges: any[] = [];
     for (const badgeData of badges) {
       const existingBadge = await prisma.badge.findUnique({
         where: { name: badgeData.name }

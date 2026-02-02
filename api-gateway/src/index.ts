@@ -561,6 +561,26 @@ app.get('/health', (req, res) => {
   res.json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+// Root route
+app.get('/', (req, res) => {
+  res.json({
+    message: 'Fathuss API Gateway',
+    version: '0.1.0',
+    endpoints: {
+      graphql: '/graphql',
+      health: '/health',
+      auth: {
+        siwe: 'POST /api/auth/siwe',
+        register: 'POST /api/auth/register',
+        login: 'POST /api/auth/login',
+        github: 'GET /auth/github'
+      },
+      users: 'GET /users/:address',
+      protected: 'GET /protected'
+    }
+  });
+});
+
 // GraphQL endpoint
 app.use('/graphql', authenticateToken, graphqlHTTP({
   schema: schema,

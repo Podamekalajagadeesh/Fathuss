@@ -279,7 +279,7 @@ export default function About() {
             Join Our Community
           </h2>
           <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-            Be part of the revolution in Web3 education. Whether you're a beginner or an expert,
+            Be part of the revolution in Web3 education. Whether you&apos;re a beginner or an expert,
             Fathuss has a place for you in building the decentralized future.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
@@ -305,7 +305,7 @@ export default function About() {
             Need Help?
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400 mb-8">
-            Have questions about the platform or need support? We're here to help!
+            Have questions about the platform or need support? We&apos;re here to help!
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <a

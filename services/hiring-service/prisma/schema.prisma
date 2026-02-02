@@ -1,0 +1,211 @@
+// Prisma schema for Hiring Service
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model JobPosting {
+  id                    String   @id @default(uuid())
+  title                 String
+  description           String   @db.Text
+  company               String
+  companyLogo           String?
+  category              String   // Smart Contracts, DeFi, Web3, Frontend, Backend, Security, etc.
+  type                  String   // full-time, part-time, contract, freelance
+  remote                Boolean  @default(true)
+  location              String?
+  salaryMin             Float?
+  salaryMax             Float?
+  currency              String   @default("USD")
+  requiredSkills        String[] // JSON array of skill requirements
+  preferredSkills       String[]
+  employerId            String
+  applicationCount      Int      @default(0)
+  isActive              Boolean  @default(true)
+  featured              Boolean  @default(false)
+  featuredUntil         DateTime?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+  expiresAt             DateTime?
+
+  // Relations
+  applications          JobApplication[]
+  interviews            InterviewSession[]
+}
+
+model JobApplication {
+  id                    String   @id @default(uuid())
+  jobId                 String
+  applicantId           String
+  applicantEmail        String
+  resumeUrl             String?
+  coverLetter           String?  @db.Text
+  status                String   @default("pending") // pending, reviewing, interviewed, rejected, accepted
+  appliedAt             DateTime @default(now())
+  reviewedAt            DateTime?
+  rejectionReason       String?
+  rating                Float?   // 1-5 stars from employer
+  comments              String?  @db.Text
+  
+  // Relations
+  job                   JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  interviews            InterviewSession[]
+
+  @@unique([jobId, applicantId])
+  @@index([applicantId])
+  @@index([status])
+}
+
+model InterviewSession {
+  id                    String   @id @default(uuid())
+  jobId                 String
+  applicationId         String
+  interviewType         String   // technical, behavioral, practical, final
+  scheduledAt           DateTime
+  duration              Int      // in minutes
+  interviewer           String   // interviewer user ID
+  status                String   @default("scheduled") // scheduled, in-progress, completed, cancelled
+  meetingUrl            String?
+  recordingUrl          String?
+  notes                 String?  @db.Text
+  score                 Float?
+  feedback              String?  @db.Text
+  proctoringEnabled     Boolean  @default(false)
+  proctoringProvider    String?  // e.g., 'proctorio', 'examity'
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  // Relations
+  job                   JobPosting @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  application           JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  submissions           CodingSubmission[]
+  proctoringEvents      ProctoringEvent[]
+
+  @@index([interviewType])
+  @@index([status])
+  @@index([scheduledAt])
+}
+
+model CodingSubmission {
+  id                    String   @id @default(uuid())
+  interviewSessionId    String
+  code                  String   @db.Text
+  language              String   // solidity, rust, javascript, python, etc.
+  executionTime         Int?     // in milliseconds
+  memoryUsed            Int?     // in MB
+  testsPassed           Int?
+  testsTotal            Int?
+  output                String?  @db.Text
+  errors                String?  @db.Text
+  status                String   @default("submitted") // submitted, compiled, executed, passed, failed
+  gradingScore          Float?
+  submittedAt           DateTime @default(now())
+  graderFeedback        String?  @db.Text
+
+  // Relations
+  session               InterviewSession @relation(fields: [interviewSessionId], references: [id], onDelete: Cascade)
+
+  @@index([interviewSessionId])
+}
+
+model ProctoringEvent {
+  id                    String   @id @default(uuid())
+  interviewSessionId    String
+  eventType             String   // browser_leave, copy_paste, audio_off, face_detected, gaze_away, multiple_faces, etc.
+  severity              String   @default("warning") // info, warning, critical
+  timestamp             DateTime @default(now())
+  description           String   @db.Text
+  metadata              Json?
+  flaggedForReview      Boolean  @default(false)
+
+  // Relations
+  session               InterviewSession @relation(fields: [interviewSessionId], references: [id], onDelete: Cascade)
+
+  @@index([interviewSessionId])
+  @@index([flaggedForReview])
+}
+
+model InterviewQuestion {
+  id                    String   @id @default(uuid())
+  category              String   // technical, behavioral, practical
+  difficulty            String   @default("medium") // easy, medium, hard
+  question              String   @db.Text
+  description           String?  @db.Text
+  expectedAnswer        String?  @db.Text
+  codeTemplate          String?  @db.Text
+  testCases             Json?
+  tags                  String[]
+  createdBy             String
+  isActive              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([category])
+  @@index([difficulty])
+}
+
+model CandidateProfile {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  headline              String?
+  bio                   String?  @db.Text
+  skills                String[]
+  experience            Int?     // years of experience
+  certifications        String[]
+  portfolio             String[]
+  githubUrl             String?
+  linkedinUrl           String?
+  websiteUrl            String?
+  availability          String   @default("available") // available, not-available, negotiable
+  preferredRoles        String[]
+  preferredCompanies    String[]
+  salary                Int?
+  salaryNegotiable      Boolean  @default(true)
+  hireable              Boolean  @default(true)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([hireable])
+  @@index([availability])
+}
+
+model CompanyProfile {
+  id                    String   @id @default(uuid())
+  companyId             String   @unique
+  name                  String
+  logo                  String?
+  description           String?  @db.Text
+  website               String?
+  foundedYear           Int?
+  size                  String?  // startup, small, medium, large, enterprise
+  industry              String?
+  location              String?
+  socialLinks           Json?
+  verified              Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([verified])
+}
+
+model HiringMetrics {
+  id                    String   @id @default(uuid())
+  companyId             String
+  month                 String   // YYYY-MM format
+  jobsPosted            Int      @default(0)
+  applicationsReceived  Int      @default(0)
+  applicationsScreened  Int      @default(0)
+  interviewsCompleted   Int      @default(0)
+  offersExtended        Int      @default(0)
+  offersAccepted        Int      @default(0)
+  averageTimeToHire     Int?     // in days
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([companyId, month])
+  @@index([companyId])
+}

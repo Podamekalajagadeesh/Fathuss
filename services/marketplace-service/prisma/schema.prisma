@@ -23,6 +23,22 @@ model RevenueDistribution {
   @@map("revenue_distributions")
 }
 
+model PurchaseRecord {
+  id            String   @id @default(uuid())
+  userId        String
+  itemId        String   // challengeId or marketplace item id
+  itemType      String   // 'challenge' or 'marketplace'
+  amount        Float
+  currency      String   @default("ETH")
+  paymentTx     String
+  status        String   @default("pending") // pending, completed, failed
+  purchasedAt   DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("purchase_records")
+}
+
 model MarketplaceItem {
   id          String   @id @default(uuid())
   sellerId    String
@@ -36,4 +52,33 @@ model MarketplaceItem {
   updatedAt   DateTime @updatedAt
 
   @@map("marketplace_items")
+}
+
+model Challenge {
+  id            String   @id @default(uuid())
+  title         String
+  description   String
+  price         Float?
+  authorId      String
+  authorAddress String
+  difficulty    String
+  category      String
+  tags          String[]
+  status        String   @default("active")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("challenges")
+}
+
+model User {
+  id       String @id @default(uuid())
+  address  String @unique
+  username String? @unique
+  email    String? @unique
+  role     String @default("user")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
 }

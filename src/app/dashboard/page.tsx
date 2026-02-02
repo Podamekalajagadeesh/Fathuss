@@ -4,12 +4,14 @@ import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { TrophyIcon, ClockIcon, ArrowRightIcon, CodeBracketIcon, StarIcon, CheckCircleIcon } from '@heroicons/react/24/outline'
 import Logo from '../../components/Logo'
-import { fetchLeaderboard, fetchSolvedChallenges, fetchCurrentUser, fetchUserBadges } from '@/lib/api'
+import { fetchLeaderboard, fetchSolvedChallenges, fetchCurrentUser, fetchUserAchievements, fetchUserLevel, fetchDailyChallenge } from '@/lib/api'
 
 export default function Dashboard() {
   const [recentlySolved, setRecentlySolved] = useState<{ id: number; title: string; difficulty: string; solvedAt: string }[]>([])
   const [leaderboardPreview, setLeaderboardPreview] = useState<{ rank: number; name: string; score: number; avatar: string; isCurrentUser?: boolean }[]>([])
-  const [userBadges, setUserBadges] = useState<any[]>([])
+  const [userAchievements, setUserAchievements] = useState<any[]>([])
+  const [userLevel, setUserLevel] = useState<any>(null)
+  const [dailyChallenge, setDailyChallenge] = useState<any>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -29,9 +31,21 @@ export default function Dashboard() {
 
         setRecentlySolved(recentlySolved)
 
-        // Fetch user badges
-        const badges = await fetchUserBadges(currentUser.address)
-        setUserBadges(badges.slice(0, 6)) // Show latest 6 badges
+        // Fetch user achievements
+        const achievements = await fetchUserAchievements(currentUser.address)
+        setUserAchievements(achievements.achievements.slice(0, 6)) // Show latest 6 achievements
+
+        // Fetch user level
+        const level = await fetchUserLevel(currentUser.address)
+        setUserLevel(level)
+
+        // Fetch daily challenge
+        try {
+          const daily = await fetchDailyChallenge()
+          setDailyChallenge(daily)
+        } catch (error) {
+          console.log('Daily challenge not available')
+        }
 
         const leaderboardData = await fetchLeaderboard()
         // Assuming leaderboardData is an array with rank, name, score, etc.
@@ -156,47 +170,106 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Badges */}
+          {/* Level & XP */}
+          {userLevel && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+              <div className="flex items-center mb-6">
+                <StarIcon className="h-6 w-6 text-yellow-500 mr-2" />
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Level Progress</h3>
+              </div>
+              <div className="text-center">
+                <div className="text-4xl font-bold text-indigo-600 dark:text-indigo-400 mb-2">Level {userLevel.level}</div>
+                <div className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                  {userLevel.experiencePoints} / {userLevel.nextLevelXP} XP
+                </div>
+                <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 mb-2">
+                  <div
+                    className="bg-gradient-to-r from-indigo-500 to-purple-500 h-3 rounded-full transition-all duration-300"
+                    style={{ width: `${userLevel.progressPercent}%` }}
+                  ></div>
+                </div>
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  {userLevel.xpToNext} XP to next level
+                </div>
+                <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                  Reputation: {userLevel.reputation} points
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Achievements */}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <div className="flex items-center mb-6">
               <TrophyIcon className="h-6 w-6 text-purple-500 mr-2" />
-              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Badges</h3>
+              <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Achievements</h3>
             </div>
             <div className="grid grid-cols-2 gap-4">
-              {userBadges.length > 0 ? userBadges.map((badge) => (
-                <div key={badge.id} className="flex flex-col items-center p-4 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
+              {userAchievements.length > 0 ? userAchievements.map((achievement) => (
+                <div key={achievement.id} className="flex flex-col items-center p-4 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/20 dark:to-pink-900/20 rounded-lg border border-purple-200 dark:border-purple-700">
                   <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-lg font-bold mb-2">
-                    {badge.name.charAt(0)}
+                    {achievement.name.charAt(0)}
                   </div>
-                  <h4 className="text-sm font-medium text-gray-900 dark:text-white text-center">{badge.name}</h4>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-1">{badge.description}</p>
+                  <h4 className="text-sm font-medium text-gray-900 dark:text-white text-center">{achievement.name}</h4>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 text-center mt-1">{achievement.description}</p>
                   <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full mt-2 ${
-                    badge.rarity === 'common' ? 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200' :
-                    badge.rarity === 'rare' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
-                    badge.rarity === 'epic' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
+                    achievement.rarity === 'common' ? 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200' :
+                    achievement.rarity === 'rare' ? 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200' :
+                    achievement.rarity === 'epic' ? 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200' :
                     'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200'
                   }`}>
-                    {badge.rarity}
+                    {achievement.rarity}
                   </span>
                 </div>
               )) : (
                 <div className="col-span-2 text-center py-8">
                   <TrophyIcon className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500 dark:text-gray-400">No badges earned yet</p>
-                  <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">Complete challenges to earn badges!</p>
+                  <p className="text-gray-500 dark:text-gray-400">No achievements earned yet</p>
+                  <p className="text-sm text-gray-400 dark:text-gray-500 mt-1">Complete challenges to earn achievements!</p>
                 </div>
               )}
             </div>
-            {userBadges.length > 4 && (
+            {userAchievements.length > 4 && (
               <div className="mt-6 text-center">
                 <button className="text-indigo-600 hover:text-indigo-800 dark:text-indigo-400 dark:hover:text-indigo-300 font-medium">
-                  View all badges →
+                  View all achievements →
                 </button>
               </div>
             )}
           </div>
 
-          {/* Leaderboard Preview */}
+          {/* Daily Challenge */}
+          {dailyChallenge && (
+            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+              <div className="flex items-center mb-6">
+                <ClockIcon className="h-6 w-6 text-green-500 mr-2" />
+                <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Daily Challenge</h3>
+              </div>
+              <div className="text-center">
+                <h4 className="text-lg font-medium text-gray-900 dark:text-white mb-2">{dailyChallenge.title}</h4>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{dailyChallenge.description}</p>
+                <div className="mb-4">
+                  <div className="text-2xl font-bold text-indigo-600 dark:text-indigo-400">
+                    {dailyChallenge.progress} / {dailyChallenge.target}
+                  </div>
+                  <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2 mt-2">
+                    <div
+                      className="bg-gradient-to-r from-green-500 to-blue-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${Math.min(100, (dailyChallenge.progress / dailyChallenge.target) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+                {dailyChallenge.completed && !dailyChallenge.claimed && (
+                  <button className="bg-gradient-to-r from-green-500 to-blue-500 text-white px-6 py-2 rounded-lg font-medium hover:from-green-600 hover:to-blue-600 transition-colors">
+                    Claim {dailyChallenge.rewardXP} XP + {dailyChallenge.rewardPoints} Points
+                  </button>
+                )}
+                {dailyChallenge.claimed && (
+                  <div className="text-green-600 dark:text-green-400 font-medium">✓ Completed & Claimed!</div>
+                )}
+              </div>
+            </div>
+          )}
           <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm border border-gray-200 dark:border-gray-700 p-6">
             <div className="flex items-center mb-6">
               <TrophyIcon className="h-6 w-6 text-yellow-500 mr-2" />

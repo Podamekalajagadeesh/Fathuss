@@ -27,6 +27,8 @@ model User {
   updatedAt             DateTime @updatedAt
 
   submissions           Submission[]
+  achievements          UserAchievement[]
+  dailyChallenges       UserDailyChallenge[]
 
   @@map("users")
 }
@@ -63,4 +65,68 @@ model Submission {
   @@index([challengeId, userId])
   @@index([status])
   @@map("submissions")
+}
+
+model Achievement {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String
+  icon        String?
+  category    String
+  type        String   // "count", "streak", "score", "special"
+  threshold   Int      // required value to unlock
+  points      Int      @default(0)
+  xpReward    Int      @default(0)
+  rarity      String   @default("common") // "common", "rare", "epic", "legendary"
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  users       UserAchievement[]
+
+  @@map("achievements")
+}
+
+model UserAchievement {
+  id            String   @id @default(uuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  achievementId String
+  achievement   Achievement @relation(fields: [achievementId], references: [id])
+  unlockedAt    DateTime @default(now())
+
+  @@unique([userId, achievementId])
+  @@map("user_achievements")
+}
+
+model DailyChallenge {
+  id          String   @id @default(uuid())
+  date        DateTime @unique
+  title       String
+  description String
+  type        String   // "solve_challenge", "streak", "score"
+  target      Int
+  rewardXP    Int      @default(50)
+  rewardPoints Int     @default(10)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  participants UserDailyChallenge[]
+
+  @@map("daily_challenges")
+}
+
+model UserDailyChallenge {
+  id               String   @id @default(uuid())
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  dailyChallengeId String
+  dailyChallenge   DailyChallenge @relation(fields: [dailyChallengeId], references: [id])
+  progress         Int      @default(0)
+  completed        Boolean  @default(false)
+  completedAt      DateTime?
+  claimed          Boolean  @default(false)
+  claimedAt        DateTime?
+
+  @@unique([userId, dailyChallengeId])
+  @@map("user_daily_challenges")
 }

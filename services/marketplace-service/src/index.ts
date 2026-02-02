@@ -47,13 +47,42 @@ const authenticateToken = (req: express.Request, res: express.Response, next: ex
   next();
 };
 
+// Initialize blockchain provider and signer
+let provider: ethers.Provider;
+let signer: ethers.Signer;
+
+async function initializeBlockchain() {
+  try {
+    provider = new ethers.JsonRpcProvider(PROVIDER_URL);
+    
+    // If we have a private key (for platform-initiated transactions), create a signer
+    if (process.env.PLATFORM_PRIVATE_KEY) {
+      const wallet = new ethers.Wallet(process.env.PLATFORM_PRIVATE_KEY, provider);
+      signer = wallet;
+      console.log('✅ Marketplace blockchain signer initialized');
+    } else {
+      console.warn('⚠️ PLATFORM_PRIVATE_KEY not configured - platform-initiated transactions disabled');
+    }
+  } catch (error) {
+    console.error('Failed to initialize blockchain:', error);
+  }
+}
+
+// Marketplace contract ABI (ERC721 with payments)
+const MARKETPLACE_CONTRACT_ABI = [
+  "function purchaseChallenge(address buyer, address seller, uint256 amount, string memory challengeId) external payable returns (bool)",
+  "function transferFunds(address payable recipient, uint256 amount) external returns (bool)",
+  "function recordPurchase(address buyer, address seller, uint256 amount, string memory itemId) external returns (bytes32)",
+  "function distributeRevenue(address payable seller, uint256 sellerAmount, address payable platform, uint256 platformAmount) external returns (bool)"
+];
+
 // Revenue distribution functions
 async function distributeRevenue(challengeId: string, paymentAmount: number, authorAddress: string) {
   try {
     const platformFee = paymentAmount * PLATFORM_FEE;
     const authorShare = paymentAmount * AUTHOR_SPLIT;
 
-    // Store in database
+    // Store in database with pending status
     const revenueRecord = await prisma.revenueDistribution.create({
       data: {
         challengeId,
@@ -65,8 +94,55 @@ async function distributeRevenue(challengeId: string, paymentAmount: number, aut
       }
     });
 
-    // TODO: Trigger blockchain transaction for distribution
-    // This would involve calling smart contract functions to transfer funds
+    // Attempt blockchain transaction if signer is available
+    if (signer) {
+      try {
+        const contract = new ethers.Contract(MARKETPLACE_CONTRACT, MARKETPLACE_CONTRACT_ABI, signer);
+        
+        // Convert to Wei (assuming payment is in ETH)
+        const authorShareWei = ethers.parseEther(authorShare.toString());
+        const platformFeeWei = ethers.parseEther(platformFee.toString());
+        
+        // Call blockchain function to distribute revenue
+        const tx = await contract.distributeRevenue(
+          authorAddress,
+          authorShareWei,
+          PLATFORM_WALLET,
+          platformFeeWei,
+          { gasLimit: 200000 }
+        );
+
+        // Wait for transaction confirmation
+        const receipt = await tx.wait();
+        
+        if (receipt && receipt.status === 1) {
+          // Update record with transaction hash
+          await prisma.revenueDistribution.update({
+            where: { id: revenueRecord.id },
+            data: {
+              status: 'completed',
+              transactionHash: receipt.hash
+            }
+          });
+          console.log(`✅ Revenue distributed for challenge ${challengeId}: ${receipt.hash}`);
+        } else {
+          console.error(`❌ Transaction failed for revenue distribution`);
+          await prisma.revenueDistribution.update({
+            where: { id: revenueRecord.id },
+            data: { status: 'failed' }
+          });
+        }
+      } catch (blockchainError) {
+        console.error('Blockchain transaction error:', blockchainError);
+        // Keep record as pending for manual review
+        await prisma.revenueDistribution.update({
+          where: { id: revenueRecord.id },
+          data: { status: 'pending_manual_review' }
+        });
+      }
+    } else {
+      console.warn('⚠️ Signer not available - transaction stored but not executed');
+    }
 
     return { platformFee, authorShare, recordId: revenueRecord.id };
   } catch (error) {
@@ -77,34 +153,142 @@ async function distributeRevenue(challengeId: string, paymentAmount: number, aut
 
 // Challenge access control
 async function checkChallengeAccess(userId: string, challengeId: string) {
-  // TODO: Check if user has purchased access to this challenge
-  // This would involve checking purchase records in database
-  return true; // Simplified for now
+  try {
+    const purchase = await prisma.purchaseRecord.findFirst({
+      where: {
+        userId,
+        itemId: challengeId,
+        status: 'completed'
+      }
+    });
+    return !!purchase;
+  } catch (error) {
+    console.error('Error checking challenge access:', error);
+    return false;
+  }
+}
+
+// Execute blockchain payment for challenge purchase
+async function executeBlockchainPayment(
+  buyerAddress: string,
+  sellerAddress: string,
+  amount: number,
+  challengeId: string,
+  transactionHash: string
+) {
+  try {
+    // Verify the payment transaction first
+    const receipt = await provider!.getTransactionReceipt(transactionHash);
+    
+    if (!receipt) {
+      throw new Error('Transaction receipt not found');
+    }
+
+    if (receipt.status !== 1) {
+      throw new Error('Transaction failed on-chain');
+    }
+
+    // Parse the transaction to verify amount and recipient
+    const tx = await provider!.getTransaction(transactionHash);
+    if (!tx) {
+      throw new Error('Transaction not found');
+    }
+
+    // Verify recipient is marketplace contract
+    if (tx.to?.toLowerCase() !== MARKETPLACE_CONTRACT.toLowerCase()) {
+      throw new Error('Payment not sent to marketplace contract');
+    }
+
+    // Verify amount matches (allowing for small discrepancies)
+    const expectedAmount = ethers.parseEther(amount.toString());
+    if (tx.value < expectedAmount) {
+      throw new Error('Payment amount insufficient');
+    }
+
+    // Record successful payment
+    console.log(`✅ Payment verified: ${transactionHash} for challenge ${challengeId}`);
+    return true;
+  } catch (error) {
+    console.error('Blockchain payment execution error:', error);
+    throw error;
+  }
 }
 
 // Purchase challenge access
-async function purchaseChallengeAccess(userId: string, challengeId: string, paymentTx: string) {
+async function purchaseChallengeAccess(
+  userId: string,
+  challengeId: string,
+  paymentTx: string,
+  amount: number
+) {
   try {
-    // Verify payment transaction
+    // Verify payment transaction on blockchain
     const paymentVerified = await verifyPayment(paymentTx);
 
     if (!paymentVerified) {
       throw new Error('Payment verification failed');
     }
 
-    // Record purchase
-    const purchaseRecord = {
-      userId,
+    // Get challenge details
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId },
+      select: { id: true, authorId: true, price: true, authorAddress: true }
+    });
+
+    if (!challenge) {
+      throw new Error('Challenge not found');
+    }
+
+    // Get buyer and seller addresses
+    const buyer = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { address: true }
+    });
+
+    const seller = await prisma.user.findUnique({
+      where: { id: challenge.authorId },
+      select: { address: true }
+    });
+
+    if (!buyer || !seller) {
+      throw new Error('User not found');
+    }
+
+    // Create purchase record
+    const purchaseRecord = await prisma.purchaseRecord.create({
+      data: {
+        userId,
+        itemId: challengeId,
+        itemType: 'challenge',
+        amount,
+        currency: 'ETH',
+        paymentTx,
+        status: 'completed',
+        purchasedAt: new Date()
+      }
+    });
+
+    // Execute revenue distribution
+    const platformFee = amount * PLATFORM_FEE;
+    const authorShare = amount * AUTHOR_SPLIT;
+
+    // Log distribution event
+    console.log(`📊 Purchase recorded for user ${userId}, challenge ${challengeId}: ${amount} ETH`);
+    console.log(`   Author receives: ${authorShare} ETH, Platform fee: ${platformFee} ETH`);
+
+    // Distribute revenue asynchronously (don't block the response)
+    distributeRevenue(challengeId, authorShare, seller.address).catch(err =>
+      console.error('Revenue distribution error:', err)
+    );
+
+    return {
+      purchaseId: purchaseRecord.id,
       challengeId,
+      userId,
+      amount,
       paymentTx,
-      purchaseDate: new Date().toISOString(),
-      accessGranted: true
+      status: 'completed'
     };
-
-    // TODO: Store in database
-    console.log('Challenge access purchased:', purchaseRecord);
-
-    return purchaseRecord;
   } catch (error) {
     console.error('Error purchasing challenge access:', error);
     throw error;
@@ -238,25 +422,23 @@ app.get('/marketplace/items/:id', async (req, res) => {
 app.post('/marketplace/purchase/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-    const { paymentMethod, transactionHash } = req.body;
+    const { transactionHash, amount } = req.body;
+    const userId = (req as any).user.id;
 
-    // TODO: Process payment and create purchase record
-    const purchase = {
-      id: 'purchase_' + Date.now(),
-      itemId: id,
-      buyer: (req as any).user.address,
-      seller: '0x742d35Cc6634C0532925a3b844Bc454e4438f44e',
-      price: 0.1,
-      currency: 'ETH',
-      transactionHash,
-      status: 'completed',
-      purchasedAt: new Date().toISOString()
-    };
+    if (!transactionHash || !amount) {
+      return res.status(400).json({ error: 'Transaction hash and amount required' });
+    }
 
-    res.json(purchase);
-  } catch (error) {
+    // Process blockchain payment and create purchase record
+    const purchase = await purchaseChallengeAccess(userId, id, transactionHash, amount);
+
+    res.status(201).json({
+      success: true,
+      purchase
+    });
+  } catch (error: any) {
     console.error('Error processing purchase:', error);
-    res.status(500).json({ error: 'Failed to process purchase' });
+    res.status(500).json({ error: error.message || 'Failed to process purchase' });
   }
 });
 
@@ -338,14 +520,17 @@ app.post('/challenges/:challengeId/purchase', authenticateToken, async (req, res
     const { paymentTx } = req.body;
     const userId = (req as any).user.id;
 
-    // Purchase challenge access
-    const purchase = await purchaseChallengeAccess(userId, challengeId, paymentTx);
-
-    // Get challenge details to distribute revenue
+    // Get challenge details to get price
     const challenge = await getChallengeDetails(challengeId);
-    if (challenge && challenge.price) {
-      await distributeRevenue(challengeId, challenge.price, challenge.authorAddress);
+    if (!challenge || !challenge.price) {
+      return res.status(400).json({ error: 'Challenge not found or not for sale' });
     }
+
+    // Purchase challenge access
+    const purchase = await purchaseChallengeAccess(userId, challengeId, paymentTx, challenge.price);
+
+    // Distribute revenue
+    await distributeRevenue(challengeId, challenge.price, challenge.authorAddress);
 
     res.json({
       success: true,
@@ -487,12 +672,33 @@ async function getChallengeDetails(challengeId: string) {
 
 // Health check
 app.get('/health', (req, res) => {
-  res.json({ status: 'OK', service: 'marketplace-service', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'OK',
+    service: 'marketplace-service',
+    blockchain: provider ? 'connected' : 'disconnected',
+    signer: signer ? 'available' : 'unavailable',
+    timestamp: new Date().toISOString()
+  });
 });
 
-app.listen(PORT, () => {
-  console.log(`Marketplace Service running on port ${PORT}`);
-});
+// Start server
+async function startServer() {
+  try {
+    // Initialize blockchain
+    await initializeBlockchain();
+
+    app.listen(PORT, () => {
+      console.log(`✅ Marketplace Service running on port ${PORT}`);
+      console.log(`Blockchain: ${provider ? '✅ Connected' : '❌ Disconnected'}`);
+      console.log(`Signer: ${signer ? '✅ Available' : '⚠️ Unavailable'}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
 
 // Graceful shutdown
 process.on('SIGTERM', async () => {

@@ -80,3 +80,42 @@ export const fetchUserBadges = async (address: string): Promise<any[]> => {
   const response = await apiClient.get(`/users/${address}/badges`)
   return response.data.badges
 }
+
+export const fetchUserAchievements = async (address: string): Promise<any> => {
+  const response = await apiClient.get(`/achievements/user/${address}`)
+  return response.data
+}
+
+export const fetchAllAchievements = async (): Promise<any[]> => {
+  const response = await apiClient.get('/achievements')
+  return response.data
+}
+
+export const fetchUserLevel = async (address: string): Promise<any> => {
+  const response = await apiClient.get(`/user/level/${address}`)
+  return response.data
+}
+
+export const fetchDailyChallenge = async (): Promise<any> => {
+  const response = await apiClient.get('/daily-challenge')
+  return response.data
+}
+
+export const updateDailyChallengeProgress = async (challengeId: string, progress: number): Promise<any> => {
+  const response = await apiClient.post('/daily-challenge/progress', { challengeId, progress })
+  return response.data
+}
+
+export const claimDailyChallengeReward = async (challengeId: string): Promise<any> => {
+  const response = await apiClient.post('/daily-challenge/claim', { challengeId })
+  return response.data
+}
+
+export const signInWithEthereum = async (address: string, signMessageAsync: (args: { message: string }) => Promise<string>): Promise<any> => {
+  const message = `Sign in to Fathuss with your Ethereum account: ${address}`
+  const signature = await signMessageAsync({ message })
+  const response = await apiClient.post('/auth/siwe', { address, message, signature })
+  const { token } = response.data
+  localStorage.setItem('authToken', token)
+  return response.data
+}

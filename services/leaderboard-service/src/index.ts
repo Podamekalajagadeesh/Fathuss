@@ -184,6 +184,7 @@ app.get('/leaderboard/user/:address', authenticateToken, async (req, res) => {
             status: 'completed'
           }
         },
+        achievements: true,
         _count: {
           select: {
             submissions: true
@@ -256,6 +257,10 @@ app.get('/leaderboard/user/:address', authenticateToken, async (req, res) => {
       averageScore: Math.round(averageScore * 100) / 100,
       bestStreak: user.longestStreak,
       currentStreak: user.currentStreak,
+      level: user.level,
+      experiencePoints: user.experiencePoints,
+      reputation: user.reputation,
+      achievementsCount: user.achievements.length,
       categoryRanks
     };
 
@@ -319,19 +324,452 @@ app.post('/leaderboard/update', async (req, res) => {
   try {
     const { userId, challengeId, score, points } = req.body;
 
+// Update user XP and level
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (user) {
+      const xpGained = Math.floor(points / 10) + 10; // Base XP
+      const newXP = user.experiencePoints + xpGained;
+      const newLevel = Math.floor(newXP / 100) + 1; // 100 XP per level
+
+      // Update streak
+      const now = new Date();
+      const lastActivity = user.lastActivityAt;
+      let newStreak = user.currentStreak;
+
+      if (lastActivity) {
+        const lastDate = new Date(lastActivity);
+        lastDate.setHours(0, 0, 0, 0);
+        const today = new Date(now);
+        today.setHours(0, 0, 0, 0);
+        const yesterday = new Date(today);
+        yesterday.setDate(yesterday.getDate() - 1);
+
+        if (lastDate.getTime() === yesterday.getTime()) {
+          newStreak += 1;
+        } else if (lastDate.getTime() !== today.getTime()) {
+          newStreak = 1; // Reset if not consecutive
+        }
+      } else {
+        newStreak = 1;
+      }
+
+      const longestStreak = Math.max(user.longestStreak, newStreak);
+
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          experiencePoints: newXP,
+          level: newLevel,
+          totalScore: { increment: points },
+          challengesCompleted: { increment: 1 },
+          currentStreak: newStreak,
+          longestStreak: longestStreak,
+          lastActivityAt: now
+        }
+      });
+
+      // Check for achievements
+      await checkAndAwardAchievements(userId);
+    }
+
     // Invalidate relevant caches
     const keys = await redis.keys('leaderboard:*');
     if (keys.length > 0) {
       await redis.del(keys);
     }
 
-    // Optionally update user stats if needed
-    // For now, assume user service handles user updates
-
-    res.json({ success: true, message: 'Leaderboard cache invalidated' });
+    res.json({ success: true, message: 'Leaderboard updated' });
   } catch (error) {
     console.error('Error updating leaderboard:', error);
     res.status(500).json({ error: 'Failed to update leaderboard' });
+  }
+});
+
+// Achievement checking and awarding
+async function checkAndAwardAchievements(userId: string) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { 
+      achievements: { select: { achievementId: true } },
+      submissions: { where: { status: 'completed' }, select: { id: true } }
+    }
+  });
+
+  if (!user) return;
+
+  const achievements = await prisma.achievement.findMany({ where: { isActive: true } });
+  const userAchievementIds = user.achievements.map(a => a.achievementId);
+
+  for (const achievement of achievements) {
+    if (userAchievementIds.includes(achievement.id)) continue;
+
+    let shouldAward = false;
+
+    switch (achievement.type) {
+      case 'count':
+        if (achievement.name.includes('Challenge')) {
+          shouldAward = user.submissions.length >= achievement.threshold;
+        }
+        break;
+      case 'streak':
+        shouldAward = user.longestStreak >= achievement.threshold;
+        break;
+      case 'score':
+        shouldAward = user.totalScore >= achievement.threshold;
+        break;
+      case 'level':
+        shouldAward = user.level >= achievement.threshold;
+        break;
+    }
+
+    if (shouldAward) {
+      await prisma.userAchievement.create({
+        data: {
+          userId,
+          achievementId: achievement.id
+        }
+      });
+
+      // Award XP and points
+      await prisma.user.update({
+        where: { id: userId },
+        data: {
+          experiencePoints: { increment: achievement.xpReward },
+          reputation: { increment: achievement.points }
+        }
+      });
+    }
+  }
+}
+
+// Get user achievements
+app.get('/achievements/user/:address', authenticateToken, async (req, res) => {
+  try {
+    const { address } = req.params;
+    const cacheKey = `achievements:user:${address}`;
+
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { address: address.toLowerCase() },
+      include: {
+        achievements: {
+          include: { achievement: true },
+          orderBy: { unlockedAt: 'desc' }
+        }
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const result = {
+      user: user.address,
+      achievements: user.achievements.map(ua => ({
+        id: ua.achievement.id,
+        name: ua.achievement.name,
+        description: ua.achievement.description,
+        icon: ua.achievement.icon,
+        category: ua.achievement.category,
+        rarity: ua.achievement.rarity,
+        unlockedAt: ua.unlockedAt.toISOString()
+      }))
+    };
+
+    await redis.setEx(cacheKey, 300, JSON.stringify(result));
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching user achievements:', error);
+    res.status(500).json({ error: 'Failed to fetch achievements' });
+  }
+});
+
+// Get all available achievements
+app.get('/achievements', async (req, res) => {
+  try {
+    const cacheKey = 'achievements:all';
+
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
+    const achievements = await prisma.achievement.findMany({
+      where: { isActive: true },
+      orderBy: { category: 'asc' }
+    });
+
+    const result = achievements.map(a => ({
+      id: a.id,
+      name: a.name,
+      description: a.description,
+      icon: a.icon,
+      category: a.category,
+      type: a.type,
+      threshold: a.threshold,
+      points: a.points,
+      xpReward: a.xpReward,
+      rarity: a.rarity
+    }));
+
+    await redis.setEx(cacheKey, 600, JSON.stringify(result)); // Cache for 10 minutes
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching achievements:', error);
+    res.status(500).json({ error: 'Failed to fetch achievements' });
+  }
+});
+
+// Get today's daily challenge
+app.get('/daily-challenge', authenticateToken, async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    let dailyChallenge = await prisma.dailyChallenge.findUnique({
+      where: { date: today }
+    });
+
+    if (!dailyChallenge) {
+      // Create today's challenge if not exists
+      const challengeTypes = [
+        { type: 'solve_challenge', target: 1, title: 'First Solve', description: 'Solve your first challenge today' },
+        { type: 'streak', target: 3, title: 'Keep it Going', description: 'Maintain a 3-day solving streak' },
+        { type: 'score', target: 500, title: 'High Scorer', description: 'Earn 500 points today' }
+      ];
+      const randomType = challengeTypes[Math.floor(Math.random() * challengeTypes.length)];
+
+      dailyChallenge = await prisma.dailyChallenge.create({
+        data: {
+          date: today,
+          title: randomType.title,
+          description: randomType.description,
+          type: randomType.type,
+          target: randomType.target
+        }
+      });
+    }
+
+    const userId = (req as any).user.id;
+    const userChallenge = await prisma.userDailyChallenge.findUnique({
+      where: {
+        userId_dailyChallengeId: {
+          userId,
+          dailyChallengeId: dailyChallenge.id
+        }
+      }
+    });
+
+    const result = {
+      id: dailyChallenge.id,
+      title: dailyChallenge.title,
+      description: dailyChallenge.description,
+      type: dailyChallenge.type,
+      target: dailyChallenge.target,
+      rewardXP: dailyChallenge.rewardXP,
+      rewardPoints: dailyChallenge.rewardPoints,
+      progress: userChallenge?.progress || 0,
+      completed: userChallenge?.completed || false,
+      claimed: userChallenge?.claimed || false
+    };
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching daily challenge:', error);
+    res.status(500).json({ error: 'Failed to fetch daily challenge' });
+  }
+});
+
+// Update daily challenge progress
+app.post('/daily-challenge/progress', authenticateToken, async (req, res) => {
+  try {
+    const { challengeId, progress } = req.body;
+    const userId = (req as any).user.id;
+
+    const userChallenge = await prisma.userDailyChallenge.upsert({
+      where: {
+        userId_dailyChallengeId: {
+          userId,
+          dailyChallengeId: challengeId
+        }
+      },
+      update: {
+        progress: { increment: progress }
+      },
+      create: {
+        userId,
+        dailyChallengeId: challengeId,
+        progress
+      }
+    });
+
+    const dailyChallenge = await prisma.dailyChallenge.findUnique({
+      where: { id: challengeId }
+    });
+
+    if (dailyChallenge && userChallenge.progress >= dailyChallenge.target && !userChallenge.completed) {
+      await prisma.userDailyChallenge.update({
+        where: { id: userChallenge.id },
+        data: {
+          completed: true,
+          completedAt: new Date()
+        }
+      });
+    }
+
+    res.json({ success: true, progress: userChallenge.progress + progress });
+  } catch (error) {
+    console.error('Error updating daily challenge progress:', error);
+    res.status(500).json({ error: 'Failed to update progress' });
+  }
+});
+
+// Claim daily challenge reward
+app.post('/daily-challenge/claim', authenticateToken, async (req, res) => {
+  try {
+    const { challengeId } = req.body;
+    const userId = (req as any).user.id;
+
+    const userChallenge = await prisma.userDailyChallenge.findUnique({
+      where: {
+        userId_dailyChallengeId: {
+          userId,
+          dailyChallengeId: challengeId
+        }
+      }
+    });
+
+    if (!userChallenge || !userChallenge.completed || userChallenge.claimed) {
+      return res.status(400).json({ error: 'Cannot claim reward' });
+    }
+
+    const dailyChallenge = await prisma.dailyChallenge.findUnique({
+      where: { id: challengeId }
+    });
+
+    if (!dailyChallenge) {
+      return res.status(404).json({ error: 'Daily challenge not found' });
+    }
+
+    // Award rewards
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        experiencePoints: { increment: dailyChallenge.rewardXP },
+        reputation: { increment: dailyChallenge.rewardPoints }
+      }
+    });
+
+    await prisma.userDailyChallenge.update({
+      where: { id: userChallenge.id },
+      data: {
+        claimed: true,
+        claimedAt: new Date()
+      }
+    });
+
+    res.json({
+      success: true,
+      rewards: {
+        xp: dailyChallenge.rewardXP,
+        points: dailyChallenge.rewardPoints
+      }
+    });
+  } catch (error) {
+    console.error('Error claiming daily challenge reward:', error);
+    res.status(500).json({ error: 'Failed to claim reward' });
+  }
+});
+
+// Get user level and XP info
+app.get('/user/level/:address', authenticateToken, async (req, res) => {
+  try {
+    const { address } = req.params;
+    const cacheKey = `user:level:${address}`;
+
+    const cached = await redis.get(cacheKey);
+    if (cached) {
+      return res.json(JSON.parse(cached));
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { address: address.toLowerCase() },
+      select: {
+        level: true,
+        experiencePoints: true,
+        reputation: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const currentLevelXP = (user.level - 1) * 100;
+    const nextLevelXP = user.level * 100;
+    const xpToNext = nextLevelXP - user.experiencePoints;
+
+    const result = {
+      level: user.level,
+      experiencePoints: user.experiencePoints,
+      reputation: user.reputation,
+      currentLevelXP,
+      nextLevelXP,
+      xpToNext: Math.max(0, xpToNext),
+      progressPercent: Math.min(100, ((user.experiencePoints - currentLevelXP) / 100) * 100)
+    };
+
+    await redis.setEx(cacheKey, 300, JSON.stringify(result));
+    res.json(result);
+  } catch (error) {
+    console.error('Error fetching user level:', error);
+    res.status(500).json({ error: 'Failed to fetch level info' });
+  }
+});
+
+// Seed achievements (development endpoint)
+app.post('/seed-achievements', async (req, res) => {
+  try {
+    const achievements = [
+      // Challenge count achievements
+      { name: 'First Steps', description: 'Complete your first challenge', category: 'Challenges', type: 'count', threshold: 1, points: 10, xpReward: 50, rarity: 'common' },
+      { name: 'Apprentice', description: 'Complete 10 challenges', category: 'Challenges', type: 'count', threshold: 10, points: 25, xpReward: 100, rarity: 'common' },
+      { name: 'Skilled Solver', description: 'Complete 50 challenges', category: 'Challenges', type: 'count', threshold: 50, points: 50, xpReward: 200, rarity: 'rare' },
+      { name: 'Master Solver', description: 'Complete 100 challenges', category: 'Challenges', type: 'count', threshold: 100, points: 100, xpReward: 500, rarity: 'epic' },
+      { name: 'Legend', description: 'Complete 500 challenges', category: 'Challenges', type: 'count', threshold: 500, points: 500, xpReward: 1000, rarity: 'legendary' },
+
+      // Streak achievements
+      { name: 'Consistent', description: 'Maintain a 7-day solving streak', category: 'Streaks', type: 'streak', threshold: 7, points: 30, xpReward: 150, rarity: 'rare' },
+      { name: 'Dedicated', description: 'Maintain a 30-day solving streak', category: 'Streaks', type: 'streak', threshold: 30, points: 100, xpReward: 500, rarity: 'epic' },
+      { name: 'Unstoppable', description: 'Maintain a 100-day solving streak', category: 'Streaks', type: 'streak', threshold: 100, points: 500, xpReward: 2000, rarity: 'legendary' },
+
+      // Score achievements
+      { name: 'High Scorer', description: 'Earn 1000 total points', category: 'Scoring', type: 'score', threshold: 1000, points: 20, xpReward: 100, rarity: 'common' },
+      { name: 'Elite Scorer', description: 'Earn 10000 total points', category: 'Scoring', type: 'score', threshold: 10000, points: 100, xpReward: 500, rarity: 'epic' },
+
+      // Level achievements
+      { name: 'Level Up', description: 'Reach level 5', category: 'Progression', type: 'level', threshold: 5, points: 25, xpReward: 125, rarity: 'common' },
+      { name: 'Experienced', description: 'Reach level 10', category: 'Progression', type: 'level', threshold: 10, points: 50, xpReward: 250, rarity: 'rare' },
+      { name: 'Expert', description: 'Reach level 25', category: 'Progression', type: 'level', threshold: 25, points: 150, xpReward: 750, rarity: 'epic' },
+      { name: 'Grandmaster', description: 'Reach level 50', category: 'Progression', type: 'level', threshold: 50, points: 500, xpReward: 2500, rarity: 'legendary' }
+    ];
+
+    for (const ach of achievements) {
+      await prisma.achievement.upsert({
+        where: { name: ach.name },
+        update: ach,
+        create: ach
+      });
+    }
+
+    res.json({ success: true, message: 'Achievements seeded' });
+  } catch (error) {
+    console.error('Error seeding achievements:', error);
+    res.status(500).json({ error: 'Failed to seed achievements' });
   }
 });
 

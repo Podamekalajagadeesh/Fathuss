@@ -285,20 +285,194 @@ export class AnomalyDetector {
   }
 
   /**
-   * Analyzes API usage patterns for suspicious behavior
+   * Analyzes file upload patterns for suspicious activity
    */
-  async detectApiAbuseAnomalies(timeWindowHours: number = 1): Promise<AnomalyDetectionResult[]> {
+  async detectFileUploadAnomalies(timeWindowHours: number = 24): Promise<AnomalyDetectionResult[]> {
     const anomalies: AnomalyDetectionResult[] = [];
 
-    // Detect high-frequency API calls from single IP
-    const ipAbuse = await this.detectIpApiAbuse(timeWindowHours);
-    anomalies.push(...ipAbuse);
+    // Detect unusually large files
+    const largeFileAnomalies = await this.detectLargeFileUploads();
+    anomalies.push(...largeFileAnomalies);
 
-    // Detect unusual endpoint usage patterns
-    const endpointAbuse = await this.detectEndpointAbuse(timeWindowHours);
-    anomalies.push(...endpointAbuse);
+    // Detect rapid file uploads
+    const rapidUploads = await this.detectRapidFileUploads(timeWindowHours);
+    anomalies.push(...rapidUploads);
+
+    // Detect suspicious file types
+    const maliciousFiles = await this.detectSuspiciousFileTypes();
+    anomalies.push(...maliciousFiles);
+
+    // Detect potential IPFS abuse
+    const ipfsAbuse = await this.detectIpfsAbusePatterns();
+    anomalies.push(...ipfsAbuse);
 
     return anomalies;
+  }
+
+  private async detectLargeFileUploads(): Promise<AnomalyDetectionResult[]> {
+    const query = `
+      SELECT
+        user_id,
+        file_name,
+        file_size,
+        upload_timestamp,
+        content_hash
+      FROM file_uploads
+      WHERE file_size > 104857600  -- > 100MB
+      ORDER BY file_size DESC
+      LIMIT 100
+    `;
+
+    try {
+      const result = await this.clickhouse.query({ query, format: 'JSONEachRow' });
+      const data = await result.json() as any[];
+
+      return data.map((row: any) => ({
+        anomalyType: 'unusually_large_file',
+        severity: row.file_size > 524288000 ? 'critical' : 'medium', // > 500MB = critical
+        description: `User ${row.user_id} uploaded file ${row.file_name} (${(row.file_size / 1024 / 1024).toFixed(2)}MB)`,
+        affectedUsers: [row.user_id],
+        timestamp: new Date(),
+        confidence: Math.min(0.85, (row.file_size / 1048576000) * 0.9), // Normalize to 1000MB
+        details: {
+          fileName: row.file_name,
+          fileSize: row.file_size,
+          fileSizeMb: (row.file_size / 1024 / 1024).toFixed(2),
+          uploadTime: row.upload_timestamp,
+          contentHash: row.content_hash
+        }
+      }));
+    } catch (error) {
+      console.error('Error detecting large files:', error);
+      return [];
+    }
+  }
+
+  private async detectRapidFileUploads(timeWindowHours: number): Promise<AnomalyDetectionResult[]> {
+    const query = `
+      SELECT
+        user_id,
+        count() as upload_count,
+        sum(file_size) as total_size,
+        min(upload_timestamp) as first_upload,
+        max(upload_timestamp) as last_upload,
+        arrayDistinct(arrayMap(x -> splitByString('.', x)[-1], groupArray(file_name))) as file_types
+      FROM file_uploads
+      WHERE upload_timestamp >= now() - INTERVAL ${timeWindowHours} HOUR
+      GROUP BY user_id
+      HAVING upload_count > 20
+      ORDER BY upload_count DESC
+    `;
+
+    try {
+      const result = await this.clickhouse.query({ query, format: 'JSONEachRow' });
+      const data = await result.json() as any[];
+
+      return data.map((row: any) => ({
+        anomalyType: 'rapid_file_uploads',
+        severity: row.upload_count > 100 ? 'critical' : row.upload_count > 50 ? 'high' : 'medium',
+        description: `User ${row.user_id} uploaded ${row.upload_count} files in ${timeWindowHours} hours (${(row.total_size / 1024 / 1024).toFixed(2)}MB total)`,
+        affectedUsers: [row.user_id],
+        timestamp: new Date(),
+        confidence: Math.min(0.95, row.upload_count / 30),
+        details: {
+          uploadCount: row.upload_count,
+          totalSize: row.total_size,
+          totalSizeMb: (row.total_size / 1024 / 1024).toFixed(2),
+          timeWindow: `${timeWindowHours}h`,
+          fileTypes: row.file_types,
+          uploadDuration: row.last_upload - row.first_upload
+        }
+      }));
+    } catch (error) {
+      console.error('Error detecting rapid uploads:', error);
+      return [];
+    }
+  }
+
+  private async detectSuspiciousFileTypes(): Promise<AnomalyDetectionResult[]> {
+    const suspiciousExtensions = [
+      'exe', 'bat', 'cmd', 'com', 'msi', 'scr', 'vbs', 'ps1',
+      'zip', 'rar', '7z', 'iso', 'dmg',
+      'php', 'jsp', 'asp', 'aspx', 'cfm'
+    ];
+
+    const query = `
+      SELECT
+        user_id,
+        file_name,
+        upload_timestamp,
+        file_size,
+        splitByString('.', file_name)[-1] as extension
+      FROM file_uploads
+      WHERE extension IN (${suspiciousExtensions.map(e => `'${e}'`).join(',')})
+      ORDER BY upload_timestamp DESC
+      LIMIT 100
+    `;
+
+    try {
+      const result = await this.clickhouse.query({ query, format: 'JSONEachRow' });
+      const data = await result.json() as any[];
+
+      return data.map((row: any) => ({
+        anomalyType: 'suspicious_file_type',
+        severity: 'high',
+        description: `User ${row.user_id} uploaded potentially malicious file: ${row.file_name}`,
+        affectedUsers: [row.user_id],
+        timestamp: new Date(),
+        confidence: 0.9,
+        details: {
+          fileName: row.file_name,
+          extension: row.extension,
+          fileSize: row.file_size,
+          uploadTime: row.upload_timestamp
+        }
+      }));
+    } catch (error) {
+      console.error('Error detecting suspicious files:', error);
+      return [];
+    }
+  }
+
+  private async detectIpfsAbusePatterns(): Promise<AnomalyDetectionResult[]> {
+    const query = `
+      SELECT
+        user_id,
+        count() as ipfs_upload_count,
+        count(distinct content_hash) as unique_hashes,
+        sum(file_size) as total_bandwidth,
+        min(upload_timestamp) as first_upload,
+        max(upload_timestamp) as last_upload
+      FROM ipfs_uploads
+      WHERE upload_timestamp >= now() - INTERVAL 24 HOUR
+      GROUP BY user_id
+      HAVING ipfs_upload_count > 50  -- More than 50 IPFS uploads per day
+      ORDER BY total_bandwidth DESC
+    `;
+
+    try {
+      const result = await this.clickhouse.query({ query, format: 'JSONEachRow' });
+      const data = await result.json() as any[];
+
+      return data.map((row: any) => ({
+        anomalyType: 'ipfs_abuse_pattern',
+        severity: row.total_bandwidth > 1073741824 ? 'critical' : 'high', // > 1GB
+        description: `User ${row.user_id} performed ${row.ipfs_upload_count} IPFS uploads (${(row.total_bandwidth / 1024 / 1024).toFixed(2)}MB)`,
+        affectedUsers: [row.user_id],
+        timestamp: new Date(),
+        confidence: Math.min(0.90, row.ipfs_upload_count / 100),
+        details: {
+          uploadCount: row.ipfs_upload_count,
+          uniqueHashes: row.unique_hashes,
+          totalBandwidth: row.total_bandwidth,
+          totalBandwidthMb: (row.total_bandwidth / 1024 / 1024).toFixed(2),
+          uploadDuration: row.last_upload - row.first_upload
+        }
+      }));
+    } catch (error) {
+      console.error('Error detecting IPFS abuse:', error);
+      return [];
+    }
   }
 
   private async detectIpApiAbuse(timeWindowHours: number): Promise<AnomalyDetectionResult[]> {
@@ -438,5 +612,13 @@ export class AnomalyDetector {
     }
 
     return recommendations;
+  }
+
+  /**
+   * Detects API abuse anomalies
+   */
+  async detectApiAbuseAnomalies(timeWindowHours: number = 1): Promise<AnomalyDetectionResult[]> {
+    // TODO: Implement API abuse detection
+    return [];
   }
 }

@@ -1,6 +1,10 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import { fetchSubmissionResult } from '@/lib/api'
+import { XCircleIcon, CheckCircleIcon, ClockIcon, ArrowLeftIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 
 interface SubmissionResult {
   submissionId: string
@@ -74,7 +78,7 @@ export default function ProblemResults({ params }: ProblemResultsProps) {
 
     // Poll for updates if submission is still pending
     const pollInterval = setInterval(() => {
-      if (result?.status === 'pending' || result?.status === 'running') {
+      if (result?.status === 'pending') {
         fetchResult()
       } else {
         clearInterval(pollInterval)

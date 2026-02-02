@@ -7,6 +7,17 @@ import { ArrowLeftIcon, PlayIcon, PaperAirplaneIcon, CodeBracketIcon } from '@he
 import MonacoEditor from '@/components/MonacoEditor'
 import { fetchChallenge, submitChallenge } from '@/lib/api'
 
+interface Problem {
+  id: string
+  title: string
+  description: string
+  difficulty: 'Easy' | 'Medium' | 'Hard'
+  topic: string
+  examples: { input: string; output: string; explanation?: string }[]
+  constraints: string[]
+  starterCode: { [key: string]: string }
+}
+
 interface ProblemPageProps {
   params: Promise<{ id: string }>
 }
@@ -21,7 +32,7 @@ export default function ProblemDetails({ params }: ProblemPageProps) {
   const [inputData, setInputData] = useState('')
   const [output, setOutput] = useState('')
   const [isRunning, setIsRunning] = useState(false)
-  const [problem, setProblem] = useState(null)
+  const [problem, setProblem] = useState<Problem | null>(null)
   const [loading, setLoading] = useState(true)
   const [id, setId] = useState<string>('')
 
@@ -124,7 +135,7 @@ Memory used: 8.2MB`)
             Problem Not Found
           </h1>
           <p className="text-gray-600 dark:text-gray-400 mb-8">
-            The challenge you're looking for doesn't exist.
+            The challenge you&apos;re looking for doesn&apos;t exist.
           </p>
           <Link
             href="/problems"
@@ -168,16 +179,16 @@ Memory used: 8.2MB`)
             {/* Problem Header */}
             <div>
               <div className="flex items-center gap-4 mb-4">
-                <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{problem.title}</h1>
+                <h1 className="text-3xl font-bold text-gray-900 dark:text-white">{problem!.title}</h1>
                 <span className={`inline-flex px-3 py-1 text-sm font-semibold rounded-full ${
-                  problem.difficulty === 'Easy' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
-                  problem.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
+                  problem!.difficulty === 'Easy' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200' :
+                  problem!.difficulty === 'Medium' ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200' :
                   'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
                 }`}>
-                  {problem.difficulty}
+                  {problem!.difficulty}
                 </span>
               </div>
-              <p className="text-gray-600 dark:text-gray-400">Topic: {problem.topic}</p>
+              <p className="text-gray-600 dark:text-gray-400">Topic: {problem!.topic}</p>
             </div>
 
             {/* Tabs */}
@@ -203,13 +214,13 @@ Memory used: 8.2MB`)
             <div className="min-h-[400px]">
               {activeTab === 'description' && (
                 <div className="prose dark:prose-invert max-w-none">
-                  <p className="text-gray-700 dark:text-gray-300 whitespace-pre-line">{problem.description}</p>
+                  <p className="text-gray-700 dark:text-gray-300 whitespace-pre-line">{problem!.description}</p>
                 </div>
               )}
 
               {activeTab === 'examples' && (
                 <div className="space-y-6">
-                  {problem.examples.map((example, index) => (
+                  {problem!.examples.map((example, index) => (
                     <div key={index} className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                       <h4 className="font-semibold text-gray-900 dark:text-white mb-2">Example {index + 1}:</h4>
                       <div className="space-y-2">
@@ -239,7 +250,7 @@ Memory used: 8.2MB`)
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
                   <h4 className="font-semibold text-gray-900 dark:text-white mb-3">Constraints:</h4>
                   <ul className="list-disc list-inside space-y-1 text-gray-700 dark:text-gray-300">
-                    {problem.constraints.map((constraint, index) => (
+                    {problem!.constraints.map((constraint, index) => (
                       <li key={index}>{constraint}</li>
                     ))}
                   </ul>

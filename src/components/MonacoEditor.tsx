@@ -114,7 +114,7 @@ export default function MonacoEditor({
         hover: {
           enabled: true
         },
-        bracketMatching: 'always',
+        matchBrackets: 'always',
         autoClosingBrackets: 'always',
         autoClosingQuotes: 'always',
         formatOnPaste: true,

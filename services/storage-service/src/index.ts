@@ -313,6 +313,36 @@ app.get('/analytics/anti-cheat-report', authenticateToken, async (req: Request, 
   }
 });
 
+// File upload anomaly detection
+app.get('/analytics/file-upload-anomalies', authenticateToken, async (req: Request, res: Response) => {
+  try {
+    const { timeWindowHours = 24 } = req.query;
+
+    const anomalies = await anomalyDetector.detectFileUploadAnomalies(
+      parseInt(timeWindowHours as string)
+    );
+
+    // Separate by severity
+    const bySeverity = {
+      critical: anomalies.filter(a => a.severity === 'critical'),
+      high: anomalies.filter(a => a.severity === 'high'),
+      medium: anomalies.filter(a => a.severity === 'medium'),
+      low: anomalies.filter(a => a.severity === 'low')
+    };
+
+    res.json({
+      totalAnomalies: anomalies.length,
+      bySeverity,
+      anomalies,
+      timeWindow: `${timeWindowHours} hours`,
+      generatedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('File upload anomaly detection error:', error);
+    res.status(500).json({ error: 'Failed to detect file upload anomalies' });
+  }
+});
+
 // Cache management
 app.post('/cache/set', authenticateToken, async (req: Request, res: Response) => {
   try {

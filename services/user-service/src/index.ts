@@ -211,7 +211,7 @@ app.get('/users/:address/stats', authenticateToken, async (req, res) => {
     }, {} as Record<string, number>);
 
     const favoriteLanguage = Object.entries(languageStats)
-      .sort(([,a], [,b]) => b - a)[0]?.[0] || 'none';
+      .sort(([,a]: [string, number], [,b]: [string, number]) => b - a)[0]?.[0] || 'none';
 
     const stats = {
       totalSubmissions,

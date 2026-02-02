@@ -5,12 +5,22 @@ import Link from 'next/link'
 import { MagnifyingGlassIcon, AdjustmentsHorizontalIcon, ChevronLeftIcon, ChevronRightIcon, CodeBracketIcon } from '@heroicons/react/24/outline'
 import { fetchChallenges, fetchSolvedChallengeIds, fetchCurrentUser } from '@/lib/api'
 
+interface Problem {
+  id: string
+  title: string
+  description: string
+  difficulty: 'Easy' | 'Medium' | 'Hard'
+  topic: string
+  solved?: boolean
+  acceptance?: string
+}
+
 export default function Problems() {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedDifficulty, setSelectedDifficulty] = useState('all')
   const [selectedTopic, setSelectedTopic] = useState('all')
   const [currentPage, setCurrentPage] = useState(1)
-  const [problems, setProblems] = useState([])
+  const [problems, setProblems] = useState<Problem[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {

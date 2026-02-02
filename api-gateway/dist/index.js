@@ -460,6 +460,19 @@ app.use('/graphql', authenticateToken, (0, express_graphql_1.graphqlHTTP)({
     context: ({ req }) => ({ authorization: req.headers.authorization })
 }));
 // User service routes
+app.get('/users/me', authenticateToken, async (req, res) => {
+    try {
+        const userAddress = req.user.address;
+        const response = await fetch(`http://localhost:4001/users/${userAddress}`, {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        res.status(500).json({ error: 'User service unavailable' });
+    }
+});
 app.get('/users/:address', authenticateToken, async (req, res) => {
     try {
         const response = await fetch(`http://localhost:4001/users/${req.params.address}`, {
@@ -472,15 +485,10 @@ app.get('/users/:address', authenticateToken, async (req, res) => {
         res.status(500).json({ error: 'User service unavailable' });
     }
 });
-app.put('/users/:address', authenticateToken, async (req, res) => {
+app.get('/users/:address/badges', authenticateToken, async (req, res) => {
     try {
-        const response = await fetch(`http://localhost:4001/users/${req.params.address}`, {
-            method: 'PUT',
-            headers: {
-                'Authorization': req.headers.authorization,
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify(req.body)
+        const response = await fetch(`http://localhost:4001/users/${req.params.address}/badges`, {
+            headers: { 'Authorization': req.headers.authorization }
         });
         const data = await response.json();
         res.json(data);
@@ -693,6 +701,20 @@ app.get('/api/challenges/:slug', authenticateToken, async (req, res) => {
     catch (error) {
         console.error('Error fetching challenge:', error);
         res.status(500).json({ error: 'Failed to fetch challenge' });
+    }
+});
+// GET /challenges/users/:address/solved — user's solved challenges
+app.get('/challenges/users/:address/solved', authenticateToken, async (req, res) => {
+    try {
+        const response = await fetch(`http://localhost:4002/users/${req.params.address}/solved?${new URLSearchParams(req.query)}`, {
+            headers: { 'Authorization': req.headers.authorization }
+        });
+        const data = await response.json();
+        res.json(data);
+    }
+    catch (error) {
+        console.error('Error fetching solved challenges:', error);
+        res.status(500).json({ error: 'Failed to fetch solved challenges' });
     }
 });
 // POST /api/submissions — submit code for grading

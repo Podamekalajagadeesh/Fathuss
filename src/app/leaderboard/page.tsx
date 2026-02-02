@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
-import { TrophyIcon, MedalIcon, StarIcon, CodeBracketIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
+import { TrophyIcon, StarIcon, CodeBracketIcon, ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { fetchLeaderboard, fetchCurrentUser } from '@/lib/api'
 
 interface LeaderboardUser {
@@ -12,6 +12,8 @@ interface LeaderboardUser {
   score: number
   avatar: string
   solvedCount: number
+  level?: number
+  achievementsCount?: number
   isCurrentUser?: boolean
 }
 
@@ -39,8 +41,8 @@ export default function Leaderboard() {
             address: user.address,
             score: user.totalPoints,
             avatar: user.username ? user.username.charAt(0).toUpperCase() : user.address.substring(2, 3).toUpperCase(),
-            solvedCount: user.solvedCount || 0,
-            isCurrentUser: userData && user.address.toLowerCase() === userData.address.toLowerCase()
+            solvedCount: 0,
+            isCurrentUser: userData ? user.address.toLowerCase() === userData.address.toLowerCase() : false
           }))
 
         setLeaderboard(transformedData)
@@ -67,7 +69,7 @@ export default function Leaderboard() {
       case 1:
         return <TrophyIcon className="h-6 w-6 text-yellow-500" />
       case 2:
-        return <MedalIcon className="h-6 w-6 text-gray-400" />
+        return <TrophyIcon className="h-6 w-6 text-gray-400" />
       case 3:
         return <StarIcon className="h-6 w-6 text-amber-600" />
       default:
@@ -145,7 +147,7 @@ export default function Leaderboard() {
                   </div>
                 </div>
                 <div className="mb-2">
-                  <MedalIcon className="h-8 w-8 text-gray-400 mx-auto" />
+                  <TrophyIcon className="h-8 w-8 text-gray-400 mx-auto" />
                 </div>
                 <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-1">{leaderboard[1]?.name}</h3>
                 <p className="text-gray-600 dark:text-gray-400 text-sm mb-2">2nd Place</p>
